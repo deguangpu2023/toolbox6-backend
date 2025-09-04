@@ -1,0 +1,35 @@
+{
+  "name": "toolbox-visitor-counter-server",
+  "version": "1.0.0",
+  "description": "Visitor counter backend server for toolbox6.com",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "echo 'No build step required'",
+    "postinstall": "echo 'Dependencies installed successfully'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mysql2": "^3.6.5",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "visitor-counter",
+    "analytics",
+    "express",
+    "mysql",
+    "railway"
+  ],
+  "author": "toolbox6.com",
+  "license": "MIT"
+}
