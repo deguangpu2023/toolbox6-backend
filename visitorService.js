@@ -118,11 +118,11 @@ class VisitorService {
       `);
       
       return {
-        totalVisits: rows[0].total_visits || 0,
-        totalUniqueVisitors: rows[0].total_unique_visitors || 0,
-        totalPages: rows[0].total_pages || 0,
-        todayVisits: todayStats[0].today_visits || 0,
-        weekVisits: weekStats[0].week_visits || 0
+        totalVisits: parseInt(rows[0].total_visits) || 0,
+        totalUniqueVisitors: parseInt(rows[0].total_unique_visitors) || 0,
+        totalPages: parseInt(rows[0].total_pages) || 0,
+        todayVisits: parseInt(todayStats[0].today_visits) || 0,
+        weekVisits: parseInt(weekStats[0].week_visits) || 0
       };
     } catch (error) {
       console.error('获取总体统计失败:', error);
@@ -133,21 +133,32 @@ class VisitorService {
   // 获取热门页面排行
   async getTopPages(limit = 10) {
     try {
+      // 确保limit是有效的数字
+      const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10));
+      
       const [rows] = await pool.execute(`
         SELECT page_url, total_visits, unique_visitors
         FROM page_summary 
+        WHERE total_visits > 0
         ORDER BY total_visits DESC 
         LIMIT ?
-      `, [limit]);
+      `, [validLimit]);
+      
+      // 如果没有数据，返回空数组而不是错误
+      if (!rows || rows.length === 0) {
+        console.log('热门页面查询：暂无访问数据');
+        return [];
+      }
       
       return rows.map(row => ({
-        pageUrl: row.page_url,
-        totalVisits: row.total_visits,
-        uniqueVisitors: row.unique_visitors
+        pageUrl: row.page_url || '',
+        totalVisits: parseInt(row.total_visits) || 0,
+        uniqueVisitors: parseInt(row.unique_visitors) || 0
       }));
     } catch (error) {
       console.error('获取热门页面失败:', error);
-      throw error;
+      // 返回空数组而不是抛出错误，避免500错误
+      return [];
     }
   }
   
@@ -167,8 +178,8 @@ class VisitorService {
       
       return rows.map(row => ({
         date: row.date,
-        visits: row.daily_visits,
-        uniqueVisitors: row.daily_unique_visitors
+        visits: parseInt(row.daily_visits) || 0,
+        uniqueVisitors: parseInt(row.daily_unique_visitors) || 0
       }));
     } catch (error) {
       console.error('获取访问趋势失败:', error);
