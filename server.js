@@ -366,9 +366,15 @@ app.get('/api/stats/trend', async (req, res) => {
 // 获取详细访问记录（仅用于管理）
 app.get('/api/admin/visits', async (req, res) => {
   try {
+    console.log('🔍 获取访问记录请求');
+    
     // 简单的认证检查
     const authHeader = req.headers.authorization;
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    console.log('期望令牌:', `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`);
+    
     if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+      console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
         chinese: '未授权访问'
@@ -379,11 +385,15 @@ app.get('/api/admin/visits', async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
 
+    console.log(`📊 获取访问记录: page=${page}, limit=${limit}, offset=${offset}`);
+
     // 获取访问记录
     const visits = await visitorService.getVisitRecords(limit, offset);
+    console.log(`✅ 获取到 ${visits.length} 条访问记录`);
     
     // 获取总数
     const total = await visitorService.getTotalVisitCount();
+    console.log(`📈 总访问记录数: ${total}`);
 
     res.json({
       success: true,
@@ -399,10 +409,11 @@ app.get('/api/admin/visits', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('获取访问记录失败:', error);
+    console.error('❌ 获取访问记录失败:', error);
     res.status(500).json({
       error: '服务器内部错误',
-      message: '获取访问记录失败'
+      message: '获取访问记录失败',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -529,18 +540,34 @@ app.get('/api/messages/stats', async (req, res) => {
 // 获取所有留言（仅用于管理）
 app.get('/api/messages', async (req, res) => {
   try {
+    console.log('🔍 获取留言列表请求');
+    
     // 简单的认证检查
     const authHeader = req.headers.authorization;
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    
     if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+      console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
         chinese: '未授权访问'
       });
     }
 
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
+
+    console.log(`📊 获取留言列表: page=${page}, limit=${limit}, offset=${offset}`);
 
     // 获取留言列表
     const [messages] = await messagePool.execute(
@@ -551,6 +578,8 @@ app.get('/api/messages', async (req, res) => {
     // 获取总数
     const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
     const total = countResult[0].total;
+
+    console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
 
     res.json({
       success: true,
@@ -569,7 +598,8 @@ app.get('/api/messages', async (req, res) => {
     console.error('❌ 获取留言列表失败:', error);
     res.status(500).json({
       error: 'Internal server error',
-      chinese: '服务器内部错误'
+      chinese: '服务器内部错误',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -837,18 +867,34 @@ app.get('/api/debug/database-status', async (req, res) => {
 // 获取工具点赞记录（仅用于管理）
 app.get('/api/admin/tool-likes', async (req, res) => {
   try {
+    console.log('🔍 获取点赞记录请求');
+    
     // 简单的认证检查
     const authHeader = req.headers.authorization;
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    
     if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+      console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
         chinese: '未授权访问'
       });
     }
 
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
+
+    console.log(`📊 获取点赞记录: page=${page}, limit=${limit}, offset=${offset}`);
 
     // 获取点赞记录
     const [likes] = await messagePool.execute(
@@ -859,6 +905,8 @@ app.get('/api/admin/tool-likes', async (req, res) => {
     // 获取总数
     const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM tool_likes');
     const total = countResult[0].total;
+
+    console.log(`✅ 获取到 ${likes.length} 条点赞记录，总计 ${total} 条`);
 
     res.json({
       success: true,
@@ -877,7 +925,8 @@ app.get('/api/admin/tool-likes', async (req, res) => {
     console.error('❌ 获取点赞记录失败:', error);
     res.status(500).json({
       error: 'Internal server error',
-      chinese: '服务器内部错误'
+      chinese: '服务器内部错误',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });

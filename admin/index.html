@@ -554,18 +554,27 @@
                 error.style.display = 'none';
                 table.style.display = 'none';
 
+                console.log('🔍 加载访问记录数据...');
+                console.log('认证令牌:', authToken ? '已设置' : '未设置');
+
                 const response = await fetch(`/api/admin/visits?page=${visitsPage}&limit=20`, {
                     headers: { 'Authorization': `Bearer ${authToken}` }
                 });
 
+                console.log('响应状态:', response.status);
+
                 if (response.ok) {
                     const data = await response.json();
+                    console.log('访问记录数据:', data);
                     displayVisitsData(data.data);
                     setupPagination('visits', data.data.pagination, pagination);
                 } else {
-                    throw new Error('获取访问记录失败');
+                    const errorData = await response.json();
+                    console.error('API错误:', errorData);
+                    throw new Error(errorData.chinese || errorData.message || '获取访问记录失败');
                 }
             } catch (err) {
+                console.error('加载访问记录失败:', err);
                 error.textContent = err.message;
                 error.style.display = 'block';
             } finally {
@@ -605,18 +614,26 @@
                 error.style.display = 'none';
                 table.style.display = 'none';
 
+                console.log('🔍 加载留言数据...');
+
                 const response = await fetch(`/api/messages?page=${messagesPage}&limit=20`, {
                     headers: { 'Authorization': `Bearer ${authToken}` }
                 });
 
+                console.log('留言API响应状态:', response.status);
+
                 if (response.ok) {
                     const data = await response.json();
+                    console.log('留言数据:', data);
                     displayMessagesData(data.data);
                     setupPagination('messages', data.data.pagination, pagination);
                 } else {
-                    throw new Error('获取留言失败');
+                    const errorData = await response.json();
+                    console.error('留言API错误:', errorData);
+                    throw new Error(errorData.chinese || errorData.message || '获取留言失败');
                 }
             } catch (err) {
+                console.error('加载留言失败:', err);
                 error.textContent = err.message;
                 error.style.display = 'block';
             } finally {
@@ -655,15 +672,23 @@
                 error.style.display = 'none';
                 table.style.display = 'none';
 
+                console.log('🔍 加载页面统计数据...');
+
                 const response = await fetch('/api/stats/top-pages?limit=50');
+
+                console.log('页面统计API响应状态:', response.status);
 
                 if (response.ok) {
                     const data = await response.json();
+                    console.log('页面统计数据:', data);
                     displayPagesData(data.data);
                 } else {
-                    throw new Error('获取页面统计失败');
+                    const errorData = await response.json();
+                    console.error('页面统计API错误:', errorData);
+                    throw new Error(errorData.chinese || errorData.message || '获取页面统计失败');
                 }
             } catch (err) {
+                console.error('加载页面统计失败:', err);
                 error.textContent = err.message;
                 error.style.display = 'block';
             } finally {
@@ -683,18 +708,26 @@
                 error.style.display = 'none';
                 table.style.display = 'none';
 
+                console.log('🔍 加载点赞数据...');
+
                 const response = await fetch(`/api/admin/tool-likes?page=${likesPage}&limit=20`, {
                     headers: { 'Authorization': `Bearer ${authToken}` }
                 });
 
+                console.log('点赞API响应状态:', response.status);
+
                 if (response.ok) {
                     const data = await response.json();
+                    console.log('点赞数据:', data);
                     displayLikesData(data.data);
                     setupPagination('likes', data.data.pagination, pagination);
                 } else {
-                    throw new Error('获取点赞记录失败');
+                    const errorData = await response.json();
+                    console.error('点赞API错误:', errorData);
+                    throw new Error(errorData.chinese || errorData.message || '获取点赞记录失败');
                 }
             } catch (err) {
+                console.error('加载点赞失败:', err);
                 error.textContent = err.message;
                 error.style.display = 'block';
             } finally {

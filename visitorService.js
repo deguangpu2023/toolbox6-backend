@@ -133,16 +133,20 @@ class VisitorService {
   // 获取热门页面排行
   async getTopPages(limit = 10) {
     try {
+      console.log(`🔍 获取热门页面排行: limit=${limit}`);
+      
       // 确保limit是有效的数字
       const validLimit = Math.max(1, Math.min(100, parseInt(limit) || 10));
       
       const [rows] = await pool.execute(`
-        SELECT page_url, total_visits, unique_visitors
+        SELECT page_url, total_visits, unique_visitors, last_updated
         FROM page_summary 
         WHERE total_visits > 0
         ORDER BY total_visits DESC 
         LIMIT ?
       `, [validLimit]);
+      
+      console.log(`📊 查询到 ${rows.length} 条页面记录`);
       
       // 如果没有数据，返回空数组而不是错误
       if (!rows || rows.length === 0) {
@@ -150,13 +154,17 @@ class VisitorService {
         return [];
       }
       
-      return rows.map(row => ({
+      const result = rows.map(row => ({
         pageUrl: row.page_url || '',
         totalVisits: parseInt(row.total_visits) || 0,
-        uniqueVisitors: parseInt(row.unique_visitors) || 0
+        uniqueVisitors: parseInt(row.unique_visitors) || 0,
+        lastUpdated: row.last_updated
       }));
+      
+      console.log(`✅ 返回 ${result.length} 条页面统计`);
+      return result;
     } catch (error) {
-      console.error('获取热门页面失败:', error);
+      console.error('❌ 获取热门页面失败:', error);
       // 返回空数组而不是抛出错误，避免500错误
       return [];
     }
