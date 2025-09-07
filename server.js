@@ -910,6 +910,103 @@ app.get('/api/debug/auth-test', async (req, res) => {
   }
 });
 
+// 数据库表检查和修复接口
+app.post('/api/debug/fix-database', async (req, res) => {
+  try {
+    console.log('🔧 开始检查和修复数据库表...');
+    
+    const results = {
+      messagePool: !!messagePool,
+      tables: {},
+      errors: [],
+      timestamp: new Date().toISOString()
+    };
+
+    if (!messagePool) {
+      results.errors.push('数据库连接池未初始化');
+      return res.status(500).json(results);
+    }
+
+    try {
+      const connection = await messagePool.getConnection();
+      
+      // 检查并创建 messages 表
+      try {
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS messages (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            message TEXT NOT NULL,
+            ip_address VARCHAR(45),
+            user_agent TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_created_at (created_at),
+            INDEX idx_email (email)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        results.tables.messages = 'OK';
+        console.log('✅ messages 表检查/创建完成');
+      } catch (error) {
+        results.tables.messages = 'ERROR';
+        results.errors.push(`messages 表错误: ${error.message}`);
+        console.error('❌ messages 表错误:', error);
+      }
+
+      // 检查并创建 tool_likes 表
+      try {
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS tool_likes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            tool_id VARCHAR(100) NOT NULL,
+            ip_address VARCHAR(45) NOT NULL,
+            user_agent TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_tool_ip (tool_id, ip_address),
+            INDEX idx_tool_id (tool_id),
+            INDEX idx_created_at (created_at)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        results.tables.tool_likes = 'OK';
+        console.log('✅ tool_likes 表检查/创建完成');
+      } catch (error) {
+        results.tables.tool_likes = 'ERROR';
+        results.errors.push(`tool_likes 表错误: ${error.message}`);
+        console.error('❌ tool_likes 表错误:', error);
+      }
+
+      // 检查表是否存在
+      const [tables] = await connection.execute(`
+        SELECT TABLE_NAME 
+        FROM information_schema.TABLES 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME IN ('messages', 'tool_likes')
+      `, [dbConfig.database]);
+      
+      results.existingTables = tables.map(t => t.TABLE_NAME);
+      
+      connection.release();
+      
+      console.log('✅ 数据库表检查和修复完成');
+      res.json(results);
+      
+    } catch (error) {
+      results.errors.push(`数据库连接错误: ${error.message}`);
+      console.error('❌ 数据库连接错误:', error);
+      res.status(500).json(results);
+    }
+    
+  } catch (error) {
+    console.error('❌ 数据库修复失败:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // 获取工具点赞记录（仅用于管理）
 app.get('/api/admin/tool-likes', async (req, res) => {
   try {
@@ -1015,18 +1112,26 @@ app.use((error, req, res, next) => {
 // 启动服务器
 async function startServer() {
   try {
+    console.log('🚀 开始启动服务器...');
+    
     // 测试数据库连接
+    console.log('🔍 测试访问统计数据库连接...');
     const dbConnected = await testConnection();
     if (!dbConnected) {
-      console.error('❌ 无法连接到数据库，服务器启动失败');
+      console.error('❌ 无法连接到访问统计数据库，服务器启动失败');
       process.exit(1);
     }
+    console.log('✅ 访问统计数据库连接成功');
     
-    // 初始化数据库
+    // 初始化访问统计数据库
+    console.log('🔧 初始化访问统计数据库...');
     await initDatabase();
+    console.log('✅ 访问统计数据库初始化完成');
     
     // 初始化留言板数据库
+    console.log('🔧 初始化留言板数据库...');
     await initMessageDatabase();
+    console.log('✅ 留言板数据库初始化完成');
     
     // 启动HTTP服务器
     app.listen(PORT, () => {
@@ -1036,6 +1141,7 @@ async function startServer() {
       console.log(`🌍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`⏰ 启动时间: ${new Date().toLocaleString('zh-CN')}`);
       console.log(`💬 留言板功能已启用`);
+      console.log(`👍 工具点赞功能已启用`);
     });
     
     // 设置定时任务 - 每天凌晨2点清理旧数据
@@ -1049,6 +1155,10 @@ async function startServer() {
     
   } catch (error) {
     console.error('❌ 服务器启动失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      stack: error.stack
+    });
     process.exit(1);
   }
 }
