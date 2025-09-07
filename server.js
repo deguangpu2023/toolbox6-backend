@@ -509,12 +509,30 @@ app.post('/api/messages', async (req, res) => {
 // 获取留言统计（仅用于管理）
 app.get('/api/messages/stats', async (req, res) => {
   try {
+    console.log('🔍 获取留言统计请求');
+    
     // 简单的认证检查（在实际应用中应该使用更安全的认证方式）
     const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
+    
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    console.log('期望令牌:', expectedToken);
+    console.log('环境变量ADMIN_TOKEN:', process.env.ADMIN_TOKEN || '未设置');
+    
+    if (!authHeader || authHeader !== expectedToken) {
+      console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
         chinese: '未授权访问'
+      });
+    }
+
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
       });
     }
 
@@ -522,6 +540,8 @@ app.get('/api/messages/stats', async (req, res) => {
     const [recentRows] = await messagePool.execute(
       'SELECT COUNT(*) as recent FROM messages WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)'
     );
+
+    console.log('✅ 留言统计获取成功');
 
     res.json({
       total: rows[0].total,
@@ -532,7 +552,8 @@ app.get('/api/messages/stats', async (req, res) => {
     console.error('❌ 获取统计信息失败:', error);
     res.status(500).json({
       error: 'Internal server error',
-      chinese: '服务器内部错误'
+      chinese: '服务器内部错误',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -857,6 +878,30 @@ app.get('/api/debug/database-status', async (req, res) => {
     }
 
     res.json(status);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// 认证测试接口
+app.get('/api/debug/auth-test', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
+    
+    const result = {
+      authHeader: authHeader || '未提供',
+      expectedToken: expectedToken,
+      adminToken: process.env.ADMIN_TOKEN || '未设置',
+      isMatch: authHeader === expectedToken,
+      timestamp: new Date().toISOString()
+    };
+    
+    console.log('🔐 认证测试:', result);
+    
+    res.json(result);
   } catch (error) {
     res.status(500).json({
       error: error.message

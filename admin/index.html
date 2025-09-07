@@ -456,6 +456,25 @@
             }
 
             try {
+                console.log('🔐 尝试登录，令牌:', token);
+                
+                // 首先测试认证接口
+                const authTestResponse = await fetch('/api/debug/auth-test', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (authTestResponse.ok) {
+                    const authTestData = await authTestResponse.json();
+                    console.log('认证测试结果:', authTestData);
+                    
+                    if (!authTestData.isMatch) {
+                        showError('authError', `认证失败: 令牌不匹配。期望: ${authTestData.expectedToken}`);
+                        return;
+                    }
+                }
+                
                 // 测试令牌是否有效
                 const response = await fetch('/api/messages/stats', {
                     headers: {
@@ -463,15 +482,21 @@
                     }
                 });
 
+                console.log('登录测试响应状态:', response.status);
+
                 if (response.ok) {
                     authToken = token;
+                    console.log('✅ 登录成功，令牌已设置:', authToken);
                     document.getElementById('authSection').classList.add('hidden');
                     document.getElementById('dashboard').classList.add('active');
                     loadDashboard();
                 } else {
-                    showError('authError', '令牌无效，请检查后重试');
+                    const errorData = await response.json();
+                    console.error('登录失败:', errorData);
+                    showError('authError', errorData.chinese || '令牌无效，请检查后重试');
                 }
             } catch (error) {
+                console.error('登录异常:', error);
                 showError('authError', '登录失败，请检查网络连接');
             }
         }
