@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
+const path = require('path');
 const { testConnection, initDatabase } = require('./database');
 const visitorService = require('./visitorService');
 require('dotenv').config();
@@ -78,7 +79,19 @@ app.use('/admin', express.static('admin'));
 
 // 简单留言查看页面
 app.get('/messages', (req, res) => {
-  res.sendFile(path.join(__dirname, 'messages.html'));
+  try {
+    console.log('🔍 访问留言查看页面');
+    const filePath = path.join(__dirname, 'messages.html');
+    console.log('文件路径:', filePath);
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('❌ 发送留言页面失败:', error);
+    res.status(500).json({
+      error: '页面加载失败',
+      message: '无法加载留言查看页面',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 });
 
 // 获取真实IP地址
@@ -584,6 +597,7 @@ app.get('/api/messages/stats', async (req, res) => {
 app.get('/api/messages/view', async (req, res) => {
   try {
     console.log('🔍 简单查看留言请求');
+    console.log('请求参数:', req.query);
     
     // 检查数据库连接池是否存在
     if (!messagePool) {
@@ -601,14 +615,18 @@ app.get('/api/messages/view', async (req, res) => {
     console.log(`📊 查看留言: page=${page}, limit=${limit}, offset=${offset}`);
 
     // 获取留言列表
+    console.log('🔍 执行留言查询...');
     const [messages] = await messagePool.execute(
       'SELECT id, name, email, message, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
       [limit, offset]
     );
+    console.log(`📊 查询到 ${messages.length} 条留言记录`);
 
     // 获取总数
+    console.log('🔍 执行计数查询...');
     const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
     const total = countResult[0] ? countResult[0].total : 0;
+    console.log(`📈 总留言数: ${total}`);
 
     console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
 
@@ -627,6 +645,14 @@ app.get('/api/messages/view', async (req, res) => {
 
   } catch (error) {
     console.error('❌ 查看留言失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      stack: error.stack
+    });
+    
     res.status(500).json({
       error: 'Internal server error',
       chinese: '服务器内部错误',
