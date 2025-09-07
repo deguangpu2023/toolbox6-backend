@@ -368,13 +368,17 @@ app.get('/api/stats/trend', async (req, res) => {
 app.get('/api/admin/visits', async (req, res) => {
   try {
     console.log('🔍 获取访问记录请求');
+    console.log('请求头:', req.headers);
+    console.log('查询参数:', req.query);
     
     // 简单的认证检查
     const authHeader = req.headers.authorization;
-    console.log('认证头:', authHeader ? '已提供' : '未提供');
-    console.log('期望令牌:', `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`);
+    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
     
-    if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    console.log('期望令牌:', expectedToken);
+    
+    if (!authHeader || authHeader !== expectedToken) {
       console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
@@ -389,10 +393,12 @@ app.get('/api/admin/visits', async (req, res) => {
     console.log(`📊 获取访问记录: page=${page}, limit=${limit}, offset=${offset}`);
 
     // 获取访问记录
+    console.log('🔍 调用visitorService.getVisitRecords...');
     const visits = await visitorService.getVisitRecords(limit, offset);
     console.log(`✅ 获取到 ${visits.length} 条访问记录`);
     
     // 获取总数
+    console.log('🔍 调用visitorService.getTotalVisitCount...');
     const total = await visitorService.getTotalVisitCount();
     console.log(`📈 总访问记录数: ${total}`);
 
@@ -411,6 +417,14 @@ app.get('/api/admin/visits', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 获取访问记录失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      stack: error.stack
+    });
+    
     res.status(500).json({
       error: '服务器内部错误',
       message: '获取访问记录失败',
@@ -563,12 +577,18 @@ app.get('/api/messages/stats', async (req, res) => {
 app.get('/api/messages', async (req, res) => {
   try {
     console.log('🔍 获取留言列表请求');
+    console.log('请求头:', req.headers);
+    console.log('查询参数:', req.query);
     
     // 简单的认证检查
     const authHeader = req.headers.authorization;
-    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
     
-    if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    console.log('期望令牌:', expectedToken);
+    console.log('环境变量ADMIN_TOKEN:', process.env.ADMIN_TOKEN || '未设置');
+    
+    if (!authHeader || authHeader !== expectedToken) {
       console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
@@ -591,33 +611,67 @@ app.get('/api/messages', async (req, res) => {
 
     console.log(`📊 获取留言列表: page=${page}, limit=${limit}, offset=${offset}`);
 
-    // 获取留言列表
-    const [messages] = await messagePool.execute(
-      'SELECT id, name, email, message, ip_address, user_agent, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
-    );
+    // 测试数据库连接
+    let connection;
+    try {
+      connection = await messagePool.getConnection();
+      console.log('✅ 数据库连接获取成功');
+    } catch (connError) {
+      console.error('❌ 获取数据库连接失败:', connError);
+      return res.status(500).json({
+        error: 'Database connection failed',
+        chinese: '数据库连接失败',
+        details: process.env.NODE_ENV === 'development' ? connError.message : undefined
+      });
+    }
 
-    // 获取总数
-    const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
-    const total = countResult[0].total;
+    try {
+      // 获取留言列表
+      console.log('🔍 执行留言查询...');
+      const [messages] = await connection.execute(
+        'SELECT id, name, email, message, ip_address, user_agent, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
+        [limit, offset]
+      );
+      console.log(`📊 查询到 ${messages.length} 条留言记录`);
 
-    console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
+      // 获取总数
+      console.log('🔍 执行计数查询...');
+      const [countResult] = await connection.execute('SELECT COUNT(*) as total FROM messages');
+      const total = countResult[0] ? countResult[0].total : 0;
+      console.log(`📈 总留言数: ${total}`);
 
-    res.json({
-      success: true,
-      data: {
-        messages,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit)
+      console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
+
+      res.json({
+        success: true,
+        data: {
+          messages,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
         }
+      });
+
+    } finally {
+      if (connection) {
+        connection.release();
+        console.log('✅ 数据库连接已释放');
       }
-    });
+    }
 
   } catch (error) {
     console.error('❌ 获取留言列表失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      stack: error.stack
+    });
+    
     res.status(500).json({
       error: 'Internal server error',
       chinese: '服务器内部错误',
@@ -1011,12 +1065,17 @@ app.post('/api/debug/fix-database', async (req, res) => {
 app.get('/api/admin/tool-likes', async (req, res) => {
   try {
     console.log('🔍 获取点赞记录请求');
+    console.log('请求头:', req.headers);
+    console.log('查询参数:', req.query);
     
     // 简单的认证检查
     const authHeader = req.headers.authorization;
-    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
     
-    if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+    console.log('认证头:', authHeader ? '已提供' : '未提供');
+    console.log('期望令牌:', expectedToken);
+    
+    if (!authHeader || authHeader !== expectedToken) {
       console.log('❌ 认证失败');
       return res.status(401).json({
         error: 'Unauthorized',
@@ -1039,33 +1098,67 @@ app.get('/api/admin/tool-likes', async (req, res) => {
 
     console.log(`📊 获取点赞记录: page=${page}, limit=${limit}, offset=${offset}`);
 
-    // 获取点赞记录
-    const [likes] = await messagePool.execute(
-      'SELECT id, tool_id, ip_address, user_agent, created_at FROM tool_likes ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
-    );
+    // 测试数据库连接
+    let connection;
+    try {
+      connection = await messagePool.getConnection();
+      console.log('✅ 数据库连接获取成功');
+    } catch (connError) {
+      console.error('❌ 获取数据库连接失败:', connError);
+      return res.status(500).json({
+        error: 'Database connection failed',
+        chinese: '数据库连接失败',
+        details: process.env.NODE_ENV === 'development' ? connError.message : undefined
+      });
+    }
 
-    // 获取总数
-    const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM tool_likes');
-    const total = countResult[0].total;
+    try {
+      // 获取点赞记录
+      console.log('🔍 执行点赞查询...');
+      const [likes] = await connection.execute(
+        'SELECT id, tool_id, ip_address, user_agent, created_at FROM tool_likes ORDER BY created_at DESC LIMIT ? OFFSET ?',
+        [limit, offset]
+      );
+      console.log(`📊 查询到 ${likes.length} 条点赞记录`);
 
-    console.log(`✅ 获取到 ${likes.length} 条点赞记录，总计 ${total} 条`);
+      // 获取总数
+      console.log('🔍 执行计数查询...');
+      const [countResult] = await connection.execute('SELECT COUNT(*) as total FROM tool_likes');
+      const total = countResult[0] ? countResult[0].total : 0;
+      console.log(`📈 总点赞数: ${total}`);
 
-    res.json({
-      success: true,
-      data: {
-        likes,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit)
+      console.log(`✅ 获取到 ${likes.length} 条点赞记录，总计 ${total} 条`);
+
+      res.json({
+        success: true,
+        data: {
+          likes,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
         }
+      });
+
+    } finally {
+      if (connection) {
+        connection.release();
+        console.log('✅ 数据库连接已释放');
       }
-    });
+    }
 
   } catch (error) {
     console.error('❌ 获取点赞记录失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      stack: error.stack
+    });
+    
     res.status(500).json({
       error: 'Internal server error',
       chinese: '服务器内部错误',
