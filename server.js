@@ -611,24 +611,11 @@ app.get('/api/messages', async (req, res) => {
 
     console.log(`📊 获取留言列表: page=${page}, limit=${limit}, offset=${offset}`);
 
-    // 测试数据库连接
-    let connection;
-    try {
-      connection = await messagePool.getConnection();
-      console.log('✅ 数据库连接获取成功');
-    } catch (connError) {
-      console.error('❌ 获取数据库连接失败:', connError);
-      return res.status(500).json({
-        error: 'Database connection failed',
-        chinese: '数据库连接失败',
-        details: process.env.NODE_ENV === 'development' ? connError.message : undefined
-      });
-    }
-
+    // 直接使用连接池执行查询（与留言统计API保持一致）
     try {
       // 获取留言列表
       console.log('🔍 执行留言查询...');
-      const [messages] = await connection.execute(
+      const [messages] = await messagePool.execute(
         'SELECT id, name, email, message, ip_address, user_agent, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
         [limit, offset]
       );
@@ -636,7 +623,7 @@ app.get('/api/messages', async (req, res) => {
 
       // 获取总数
       console.log('🔍 执行计数查询...');
-      const [countResult] = await connection.execute('SELECT COUNT(*) as total FROM messages');
+      const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
       const total = countResult[0] ? countResult[0].total : 0;
       console.log(`📈 总留言数: ${total}`);
 
@@ -655,11 +642,13 @@ app.get('/api/messages', async (req, res) => {
         }
       });
 
-    } finally {
-      if (connection) {
-        connection.release();
-        console.log('✅ 数据库连接已释放');
-      }
+    } catch (dbError) {
+      console.error('❌ 数据库查询失败:', dbError);
+      return res.status(500).json({
+        error: 'Database query failed',
+        chinese: '数据库查询失败',
+        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+      });
     }
 
   } catch (error) {
@@ -1098,24 +1087,11 @@ app.get('/api/admin/tool-likes', async (req, res) => {
 
     console.log(`📊 获取点赞记录: page=${page}, limit=${limit}, offset=${offset}`);
 
-    // 测试数据库连接
-    let connection;
-    try {
-      connection = await messagePool.getConnection();
-      console.log('✅ 数据库连接获取成功');
-    } catch (connError) {
-      console.error('❌ 获取数据库连接失败:', connError);
-      return res.status(500).json({
-        error: 'Database connection failed',
-        chinese: '数据库连接失败',
-        details: process.env.NODE_ENV === 'development' ? connError.message : undefined
-      });
-    }
-
+    // 直接使用连接池执行查询（与其他API保持一致）
     try {
       // 获取点赞记录
       console.log('🔍 执行点赞查询...');
-      const [likes] = await connection.execute(
+      const [likes] = await messagePool.execute(
         'SELECT id, tool_id, ip_address, user_agent, created_at FROM tool_likes ORDER BY created_at DESC LIMIT ? OFFSET ?',
         [limit, offset]
       );
@@ -1123,7 +1099,7 @@ app.get('/api/admin/tool-likes', async (req, res) => {
 
       // 获取总数
       console.log('🔍 执行计数查询...');
-      const [countResult] = await connection.execute('SELECT COUNT(*) as total FROM tool_likes');
+      const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM tool_likes');
       const total = countResult[0] ? countResult[0].total : 0;
       console.log(`📈 总点赞数: ${total}`);
 
@@ -1142,11 +1118,13 @@ app.get('/api/admin/tool-likes', async (req, res) => {
         }
       });
 
-    } finally {
-      if (connection) {
-        connection.release();
-        console.log('✅ 数据库连接已释放');
-      }
+    } catch (dbError) {
+      console.error('❌ 数据库查询失败:', dbError);
+      return res.status(500).json({
+        error: 'Database query failed',
+        chinese: '数据库查询失败',
+        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+      });
     }
 
   } catch (error) {
