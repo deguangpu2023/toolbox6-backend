@@ -202,6 +202,50 @@ class VisitorService {
       throw error;
     }
   }
+
+  // 获取访问记录（分页）
+  async getVisitRecords(limit = 50, offset = 0) {
+    try {
+      const [rows] = await pool.execute(`
+        SELECT 
+          id,
+          page_url,
+          visitor_ip,
+          user_agent,
+          referer,
+          visit_time
+        FROM visitor_stats 
+        ORDER BY visit_time DESC 
+        LIMIT ? OFFSET ?
+      `, [limit, offset]);
+      
+      return rows.map(row => ({
+        id: row.id,
+        pageUrl: row.page_url,
+        visitorIp: row.visitor_ip,
+        userAgent: row.user_agent,
+        referer: row.referer,
+        visitTime: row.visit_time
+      }));
+    } catch (error) {
+      console.error('获取访问记录失败:', error);
+      throw error;
+    }
+  }
+
+  // 获取访问记录总数
+  async getTotalVisitCount() {
+    try {
+      const [rows] = await pool.execute(`
+        SELECT COUNT(*) as total FROM visitor_stats
+      `);
+      
+      return parseInt(rows[0].total) || 0;
+    } catch (error) {
+      console.error('获取访问记录总数失败:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new VisitorService();
