@@ -598,6 +598,7 @@ app.get('/api/messages/view', async (req, res) => {
   try {
     console.log('🔍 简单查看留言请求');
     console.log('请求参数:', req.query);
+    console.log('请求头:', req.headers);
     
     // 检查数据库连接池是否存在
     if (!messagePool) {
@@ -613,6 +614,42 @@ app.get('/api/messages/view', async (req, res) => {
     const offset = (page - 1) * limit;
 
     console.log(`📊 查看留言: page=${page}, limit=${limit}, offset=${offset}`);
+
+    // 测试数据库连接
+    console.log('🔍 测试数据库连接...');
+    try {
+      const [testResult] = await messagePool.execute('SELECT 1 as test');
+      console.log('✅ 数据库连接测试成功:', testResult);
+    } catch (testError) {
+      console.error('❌ 数据库连接测试失败:', testError);
+      return res.status(500).json({
+        error: 'Database connection failed',
+        chinese: '数据库连接失败',
+        details: process.env.NODE_ENV === 'development' ? testError.message : undefined
+      });
+    }
+
+    // 检查表是否存在
+    console.log('🔍 检查messages表是否存在...');
+    try {
+      const [tableCheck] = await messagePool.execute("SHOW TABLES LIKE 'messages'");
+      console.log('📋 表检查结果:', tableCheck);
+      if (tableCheck.length === 0) {
+        console.error('❌ messages表不存在');
+        return res.status(500).json({
+          error: 'Table not found',
+          chinese: '数据表不存在',
+          details: 'messages表未找到，请检查数据库初始化'
+        });
+      }
+    } catch (tableError) {
+      console.error('❌ 表检查失败:', tableError);
+      return res.status(500).json({
+        error: 'Table check failed',
+        chinese: '表检查失败',
+        details: process.env.NODE_ENV === 'development' ? tableError.message : undefined
+      });
+    }
 
     // 获取留言列表
     console.log('🔍 执行留言查询...');
