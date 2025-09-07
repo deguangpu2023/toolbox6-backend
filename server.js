@@ -12,16 +12,24 @@ const PORT = process.env.PORT || 3001;
 
 // MySQL数据库连接配置（留言板）
 const dbConfig = {
-  host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
-  user: process.env.MYSQL_USER || process.env.DB_USER || 'root',
-  password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || '',
-  database: process.env.MYSQL_DATABASE || process.env.DB_NAME || 'toolbox6',
-  port: process.env.MYSQL_PORT || process.env.DB_PORT || 3306,
+  //host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
+  //user: process.env.MYSQL_USER || process.env.DB_USER || 'root',
+  //password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || '',
+  //database: process.env.MYSQL_DATABASE || process.env.DB_NAME || 'toolbox6',
+  //port: process.env.MYSQL_PORT || process.env.DB_PORT || 3306,
+  //charset: 'utf8mb4',
+  //timezone: '+00:00',
+  host: process.env.DB_HOST || 'maglev.proxy.rlwy.net',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'EpZRllhApFMUenjfLOyXSilDPHFyGbPg',
+  database: process.env.DB_NAME || 'railway',
+  port: process.env.DB_PORT || 48332,
   charset: 'utf8mb4',
-  timezone: '+00:00',
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
+  timezone: '+08:00',
+  connectionLimit: 10,
+  //acquireTimeout: 60000,
+  //timeout: 60000,
+  //reconnect: true
 };
 
 // 创建数据库连接池（留言板）
@@ -79,6 +87,14 @@ app.use((req, res, next) => {
 // 初始化留言板数据库
 async function initMessageDatabase() {
   try {
+    console.log('🔧 初始化留言板数据库...');
+    console.log('数据库配置:', {
+      host: dbConfig.host,
+      user: dbConfig.user,
+      database: dbConfig.database,
+      port: dbConfig.port
+    });
+
     messagePool = mysql.createPool({
       ...dbConfig,
       waitForConnections: true,
@@ -91,6 +107,7 @@ async function initMessageDatabase() {
     console.log('✅ 留言板数据库连接成功');
     
     // 创建消息表（如果不存在）
+    console.log('📝 创建消息表...');
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -105,8 +122,10 @@ async function initMessageDatabase() {
         INDEX idx_email (email)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    console.log('✅ 消息表创建/检查完成');
     
     // 创建工具点赞表（如果不存在）
+    console.log('👍 创建工具点赞表...');
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS tool_likes (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -120,14 +139,35 @@ async function initMessageDatabase() {
         INDEX idx_created_at (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    console.log('✅ 工具点赞表创建/检查完成');
     
-    console.log('✅ 消息表和工具点赞表创建/检查完成');
+    // 验证表是否创建成功
+    const [tables] = await connection.execute(`
+      SELECT TABLE_NAME 
+      FROM information_schema.TABLES 
+      WHERE TABLE_SCHEMA = ? 
+      AND TABLE_NAME IN ('messages', 'tool_likes')
+    `, [dbConfig.database]);
+    
+    console.log('📊 已创建的表:', tables.map(t => t.TABLE_NAME));
+    
     connection.release();
+    console.log('✅ 留言板数据库初始化完成');
   } catch (error) {
-    console.error('❌ 留言板数据库连接失败:', error.message);
+    console.error('❌ 留言板数据库连接失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState
+    });
+    
     // 在生产环境中，如果数据库连接失败，应该退出进程
     if (process.env.NODE_ENV === 'production') {
+      console.error('🚨 生产环境数据库连接失败，退出进程');
       process.exit(1);
+    } else {
+      console.warn('⚠️ 开发环境数据库连接失败，继续运行');
     }
   }
 }
@@ -162,13 +202,52 @@ app.get('/', (req, res) => {
 });
 
 // 健康检查
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const health = {
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'development',
+      services: {}
+    };
+
+    // 检查访问统计数据库
+    try {
+      const { testConnection } = require('./database');
+      const dbConnected = await testConnection();
+      health.services.visitorDatabase = dbConnected ? 'OK' : 'ERROR';
+    } catch (error) {
+      health.services.visitorDatabase = 'ERROR';
+    }
+
+    // 检查留言板数据库
+    try {
+      if (messagePool) {
+        const connection = await messagePool.getConnection();
+        await connection.execute('SELECT 1');
+        connection.release();
+        health.services.messageDatabase = 'OK';
+      } else {
+        health.services.messageDatabase = 'NOT_INITIALIZED';
+      }
+    } catch (error) {
+      health.services.messageDatabase = 'ERROR';
+    }
+
+    // 如果任何服务有问题，返回503状态
+    const hasErrors = Object.values(health.services).some(status => status === 'ERROR');
+    const statusCode = hasErrors ? 503 : 200;
+
+    res.status(statusCode).json(health);
+  } catch (error) {
+    console.error('健康检查失败:', error);
+    res.status(503).json({
+      status: 'ERROR',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    });
+  }
 });
 
 // API路由
@@ -502,10 +581,22 @@ app.get('/api/tools/:toolId/likes', async (req, res) => {
   try {
     const { toolId } = req.params;
     
+    console.log(`🔍 获取工具点赞数请求: toolId=${toolId}`);
+    
     if (!toolId) {
+      console.log('❌ 工具ID为空');
       return res.status(400).json({
         error: 'Tool ID is required',
         chinese: '工具ID是必需的'
+      });
+    }
+
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
       });
     }
 
@@ -515,16 +606,27 @@ app.get('/api/tools/:toolId/likes', async (req, res) => {
       [toolId]
     );
 
+    const count = rows[0] ? rows[0].count : 0;
+    console.log(`✅ 工具 ${toolId} 点赞数: ${count}`);
+
     res.json({
       toolId,
-      count: rows[0].count
+      count: count
     });
 
   } catch (error) {
     console.error('❌ 获取点赞数失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState
+    });
+    
     res.status(500).json({
       error: 'Internal server error',
-      chinese: '服务器内部错误'
+      chinese: '服务器内部错误',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -650,6 +752,15 @@ app.delete('/api/tools/:toolId/likes', async (req, res) => {
 // 获取所有工具点赞统计
 app.get('/api/tools/likes/stats', async (req, res) => {
   try {
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
+      });
+    }
+
     const [rows] = await messagePool.execute(`
       SELECT 
         tool_id,
@@ -675,6 +786,50 @@ app.get('/api/tools/likes/stats', async (req, res) => {
     res.status(500).json({
       error: 'Internal server error',
       chinese: '服务器内部错误'
+    });
+  }
+});
+
+// 数据库状态检查接口
+app.get('/api/debug/database-status', async (req, res) => {
+  try {
+    const status = {
+      messagePool: !!messagePool,
+      dbConfig: {
+        host: dbConfig.host,
+        user: dbConfig.user,
+        database: dbConfig.database,
+        port: dbConfig.port
+      },
+      environment: process.env.NODE_ENV || 'development'
+    };
+
+    if (messagePool) {
+      try {
+        const connection = await messagePool.getConnection();
+        
+        // 检查表是否存在
+        const [tables] = await connection.execute(`
+          SELECT TABLE_NAME 
+          FROM information_schema.TABLES 
+          WHERE TABLE_SCHEMA = ? 
+          AND TABLE_NAME IN ('messages', 'tool_likes')
+        `, [dbConfig.database]);
+        
+        status.tables = tables.map(t => t.TABLE_NAME);
+        status.connection = 'OK';
+        
+        connection.release();
+      } catch (error) {
+        status.connection = 'ERROR';
+        status.error = error.message;
+      }
+    }
+
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
     });
   }
 });
