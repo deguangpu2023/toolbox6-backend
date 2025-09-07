@@ -47,7 +47,8 @@ app.use(cors({
     'http://localhost:8080',
     'http://localhost:3000',
     'https://toolbox6.com',
-    'https://www.toolbox6.com'
+    'https://www.toolbox6.com',
+    'https://toolbox6-backend-production.up.railway.app/'
   ],
   credentials: true
 }));
