@@ -215,6 +215,7 @@
 
         <div class="controls">
             <button class="btn" onclick="loadMessages()">🔄 刷新留言</button>
+            <button class="btn" onclick="testAPI()">🧪 测试API</button>
             <div>
                 <button class="btn" onclick="changePage(-1)" id="prevBtn">上一页</button>
                 <span id="pageInfo" style="margin: 0 15px;">第 1 页</span>
@@ -251,23 +252,55 @@
                 container.innerHTML = '';
 
                 console.log(`🔍 加载第 ${currentPage} 页留言...`);
+                console.log('请求URL:', `/api/messages/view?page=${currentPage}&limit=10`);
 
                 const response = await fetch(`/api/messages/view?page=${currentPage}&limit=10`);
+                
+                console.log('响应状态:', response.status);
+                console.log('响应头:', response.headers);
                 
                 if (response.ok) {
                     const data = await response.json();
                     console.log('留言数据:', data);
                     
-                    displayMessages(data.data.messages);
-                    updatePagination(data.data.pagination);
-                    updateStats(data.data.pagination.total);
+                    if (data.success && data.data) {
+                        displayMessages(data.data.messages);
+                        updatePagination(data.data.pagination);
+                        updateStats(data.data.pagination.total);
+                    } else {
+                        throw new Error('API返回数据格式错误');
+                    }
                 } else {
-                    const errorData = await response.json();
-                    throw new Error(errorData.chinese || errorData.message || '获取留言失败');
+                    console.error('API响应错误，状态码:', response.status);
+                    let errorMessage = '获取留言失败';
+                    
+                    try {
+                        const errorData = await response.json();
+                        console.error('错误数据:', errorData);
+                        errorMessage = errorData.chinese || errorData.message || errorData.error || '获取留言失败';
+                    } catch (parseError) {
+                        console.error('解析错误响应失败:', parseError);
+                        errorMessage = `服务器错误 (${response.status})`;
+                    }
+                    
+                    throw new Error(errorMessage);
                 }
             } catch (err) {
                 console.error('加载留言失败:', err);
-                error.textContent = err.message;
+                console.error('错误详情:', {
+                    name: err.name,
+                    message: err.message,
+                    stack: err.stack
+                });
+                
+                let errorText = err.message;
+                if (err.name === 'TypeError' && err.message.includes('fetch')) {
+                    errorText = '网络连接失败，请检查网络连接';
+                } else if (err.name === 'SyntaxError') {
+                    errorText = '服务器返回数据格式错误';
+                }
+                
+                error.textContent = errorText;
                 error.style.display = 'block';
             } finally {
                 loading.style.display = 'none';
@@ -324,6 +357,51 @@
             }
         }
 
+        // 测试API
+        async function testAPI() {
+            console.log('🧪 开始测试API...');
+            
+            try {
+                // 测试数据库状态
+                console.log('🔍 测试数据库状态...');
+                const statusResponse = await fetch('/api/debug/database-status');
+                console.log('数据库状态响应:', statusResponse.status);
+                if (statusResponse.ok) {
+                    const statusData = await statusResponse.json();
+                    console.log('数据库状态数据:', statusData);
+                }
+                
+                // 测试留言查看API
+                console.log('🔍 测试留言查看API...');
+                const messagesResponse = await fetch('/api/messages/view?page=1&limit=5');
+                console.log('留言API响应:', messagesResponse.status);
+                if (messagesResponse.ok) {
+                    const messagesData = await messagesResponse.json();
+                    console.log('留言API数据:', messagesData);
+                } else {
+                    const errorData = await messagesResponse.json();
+                    console.error('留言API错误:', errorData);
+                }
+                
+                // 测试留言统计API
+                console.log('🔍 测试留言统计API...');
+                const statsResponse = await fetch('/api/messages/stats');
+                console.log('统计API响应:', statsResponse.status);
+                if (statsResponse.ok) {
+                    const statsData = await statsResponse.json();
+                    console.log('统计API数据:', statsData);
+                } else {
+                    const errorData = await statsResponse.json();
+                    console.error('统计API错误:', errorData);
+                }
+                
+                console.log('✅ API测试完成，请查看控制台输出');
+                
+            } catch (error) {
+                console.error('❌ API测试失败:', error);
+            }
+        }
+
         // 键盘快捷键
         document.addEventListener('keydown', function(e) {
             if (e.key === 'ArrowLeft' && currentPage > 1) {
@@ -332,6 +410,8 @@
                 changePage(1);
             } else if (e.key === 'r' || e.key === 'R') {
                 loadMessages();
+            } else if (e.key === 't' || e.key === 'T') {
+                testAPI();
             }
         });
     </script>
