@@ -76,6 +76,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // 静态文件服务
 app.use('/admin', express.static('admin'));
 
+// 简单留言查看页面
+app.get('/messages', (req, res) => {
+  res.sendFile(path.join(__dirname, 'messages.html'));
+});
+
 // 获取真实IP地址
 app.use((req, res, next) => {
   req.realIP = req.headers['x-forwarded-for'] || 
@@ -567,6 +572,61 @@ app.get('/api/messages/stats', async (req, res) => {
 
   } catch (error) {
     console.error('❌ 获取统计信息失败:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      chinese: '服务器内部错误',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// 简单查看留言内容（无需认证）
+app.get('/api/messages/view', async (req, res) => {
+  try {
+    console.log('🔍 简单查看留言请求');
+    
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
+      });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    console.log(`📊 查看留言: page=${page}, limit=${limit}, offset=${offset}`);
+
+    // 获取留言列表
+    const [messages] = await messagePool.execute(
+      'SELECT id, name, email, message, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [limit, offset]
+    );
+
+    // 获取总数
+    const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
+    const total = countResult[0] ? countResult[0].total : 0;
+
+    console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
+
+    res.json({
+      success: true,
+      data: {
+        messages,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ 查看留言失败:', error);
     res.status(500).json({
       error: 'Internal server error',
       chinese: '服务器内部错误',
