@@ -9,7 +9,7 @@ const dbConfig = {
   database: process.env.DB_NAME || 'railway',
   port: process.env.DB_PORT || 48332,
   adminToken: process.env.ADMIN_TOKEN || 'admin123',
-  NODE_ENV:process.env.NODE_ENV || 'production',
+  environment:process.env.NODE_ENV || 'production',
   charset: 'utf8mb4',
   timezone: '+08:00',
   // 连接池配置
