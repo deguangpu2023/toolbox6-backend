@@ -11,9 +11,11 @@ const dbConfig = {
   adminToken: process.env.ADMIN_TOKEN || 'admin123',
   environment:process.env.NODE_ENV || 'production',
   charset: 'utf8mb4',
-  timezone: '+08:00',
+  timezone: '+08:00', // 东八区时区
   // 连接池配置
   connectionLimit: 10,
+  waitForConnections: true,
+  queueLimit: 0,
   // 移除无效的配置选项
   // acquireTimeout: 60000,  // 这个选项在MySQL2中无效
   // timeout: 60000,        // 这个选项在MySQL2中无效

@@ -1,6 +1,32 @@
 const { pool } = require('./database');
 
 class VisitorService {
+  constructor() {
+    // 简单的内存缓存
+    this.cache = new Map();
+    this.cacheTimeout = 5 * 60 * 1000; // 5分钟缓存
+  }
+
+  // 缓存管理
+  getCache(key) {
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+      return cached.data;
+    }
+    this.cache.delete(key);
+    return null;
+  }
+
+  setCache(key, data) {
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now()
+    });
+  }
+
+  clearCache() {
+    this.cache.clear();
+  }
   // 记录访问
   async recordVisit(pageUrl, visitorIp, userAgent, referer) {
     const connection = await pool.getConnection();
@@ -13,12 +39,13 @@ class VisitorService {
         VALUES (?, ?, ?, ?)
       `, [pageUrl, visitorIp, userAgent, referer]);
       
-      // 2. 更新页面汇总统计
+      // 2. 更新页面汇总统计（确保页面存在）
       await connection.execute(`
-        UPDATE page_summary 
-        SET total_visits = total_visits + 1,
-            last_updated = CURRENT_TIMESTAMP
-        WHERE page_url = ?
+        INSERT INTO page_summary (page_url, total_visits, unique_visitors, last_updated)
+        VALUES (?, 1, 0, CURRENT_TIMESTAMP)
+        ON DUPLICATE KEY UPDATE 
+          total_visits = total_visits + 1,
+          last_updated = CURRENT_TIMESTAMP
       `, [pageUrl]);
       
       // 3. 检查是否为唯一访问者（24小时内）
@@ -36,17 +63,27 @@ class VisitorService {
         WHERE page_url = ?
       `, [uniqueVisitors[0].unique_count, pageUrl]);
       
-      // 5. 更新每日统计
-      const today = new Date().toISOString().split('T')[0];
+      // 5. 更新每日统计 - 使用MySQL的时区函数确保一致性
+      // 计算今日该页面的唯一访客数
+      const [todayUniqueVisitors] = await connection.execute(`
+        SELECT COUNT(DISTINCT visitor_ip) as today_unique_count
+        FROM visitor_stats 
+        WHERE page_url = ? 
+        AND DATE(visit_time) = CURDATE()
+      `, [pageUrl]);
+      
       await connection.execute(`
         INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
-        VALUES (?, ?, 1, ?)
+        VALUES (CURDATE(), ?, 1, ?)
         ON DUPLICATE KEY UPDATE 
           visits = visits + 1,
           unique_visitors = VALUES(unique_visitors)
-      `, [today, pageUrl, uniqueVisitors[0].unique_count]);
+      `, [pageUrl, todayUniqueVisitors[0].today_unique_count]);
       
       await connection.commit();
+      
+      // 清除相关缓存
+      this.clearCache(); // 清除所有缓存，因为访问记录会影响多个统计
       
       return {
         success: true,
@@ -66,25 +103,38 @@ class VisitorService {
   // 获取页面统计
   async getPageStats(pageUrl) {
     try {
+      // 检查缓存
+      const cacheKey = `page_stats_${pageUrl}`;
+      const cached = this.getCache(cacheKey);
+      if (cached) {
+        console.log(`📊 从缓存获取页面统计: ${pageUrl}`);
+        return cached;
+      }
+
       const [rows] = await pool.execute(`
         SELECT total_visits, unique_visitors, last_updated
         FROM page_summary 
         WHERE page_url = ?
       `, [pageUrl]);
       
+      let result;
       if (rows.length === 0) {
-        return {
+        result = {
           totalVisits: 0,
           uniqueVisitors: 0,
           lastUpdated: null
         };
+      } else {
+        result = {
+          totalVisits: rows[0].total_visits,
+          uniqueVisitors: rows[0].unique_visitors,
+          lastUpdated: rows[0].last_updated
+        };
       }
-      
-      return {
-        totalVisits: rows[0].total_visits,
-        uniqueVisitors: rows[0].unique_visitors,
-        lastUpdated: rows[0].last_updated
-      };
+
+      // 缓存结果
+      this.setCache(cacheKey, result);
+      return result;
     } catch (error) {
       console.error('获取页面统计失败:', error);
       throw error;
@@ -102,13 +152,12 @@ class VisitorService {
         FROM page_summary
       `);
       
-      // 获取今日访问量
-      const today = new Date().toISOString().split('T')[0];
+      // 获取今日访问量 - 使用MySQL的CURDATE()确保时区一致性
       const [todayStats] = await pool.execute(`
         SELECT SUM(visits) as today_visits
         FROM daily_stats 
-        WHERE date = ?
-      `, [today]);
+        WHERE date = CURDATE()
+      `);
       
       // 获取最近7天访问量
       const [weekStats] = await pool.execute(`
@@ -251,6 +300,124 @@ class VisitorService {
       return parseInt(rows[0].total) || 0;
     } catch (error) {
       console.error('获取访问记录总数失败:', error);
+      throw error;
+    }
+  }
+
+  // 数据一致性检查和修复
+  async checkAndFixDataConsistency() {
+    try {
+      console.log('🔍 开始数据一致性检查...');
+      const results = {
+        issues: [],
+        fixes: [],
+        timestamp: new Date().toISOString()
+      };
+
+      // 1. 检查page_summary表中的页面是否都有对应的访问记录
+      const [orphanedPages] = await pool.execute(`
+        SELECT ps.page_url, ps.total_visits
+        FROM page_summary ps
+        LEFT JOIN visitor_stats vs ON ps.page_url = vs.page_url
+        WHERE vs.page_url IS NULL AND ps.total_visits > 0
+      `);
+
+      if (orphanedPages.length > 0) {
+        results.issues.push(`发现 ${orphanedPages.length} 个页面有访问量但无访问记录`);
+        // 修复：重置这些页面的访问量
+        for (const page of orphanedPages) {
+          await pool.execute(`
+            UPDATE page_summary 
+            SET total_visits = 0, unique_visitors = 0 
+            WHERE page_url = ?
+          `, [page.page_url]);
+        }
+        results.fixes.push(`重置了 ${orphanedPages.length} 个页面的访问量`);
+      }
+
+      // 2. 检查page_summary表中的访问量是否与实际访问记录一致
+      const [inconsistentPages] = await pool.execute(`
+        SELECT 
+          ps.page_url,
+          ps.total_visits as summary_visits,
+          COUNT(vs.id) as actual_visits
+        FROM page_summary ps
+        LEFT JOIN visitor_stats vs ON ps.page_url = vs.page_url
+        GROUP BY ps.page_url, ps.total_visits
+        HAVING ps.total_visits != actual_visits
+      `);
+
+      if (inconsistentPages.length > 0) {
+        results.issues.push(`发现 ${inconsistentPages.length} 个页面的访问量不一致`);
+        // 修复：更新访问量
+        for (const page of inconsistentPages) {
+          await pool.execute(`
+            UPDATE page_summary 
+            SET total_visits = ? 
+            WHERE page_url = ?
+          `, [page.actual_visits, page.page_url]);
+        }
+        results.fixes.push(`修复了 ${inconsistentPages.length} 个页面的访问量`);
+      }
+
+      // 3. 检查daily_stats表中的数据是否与实际访问记录一致
+      const [inconsistentDaily] = await pool.execute(`
+        SELECT 
+          ds.date,
+          ds.page_url,
+          ds.visits as daily_visits,
+          COUNT(vs.id) as actual_visits
+        FROM daily_stats ds
+        LEFT JOIN visitor_stats vs ON ds.page_url = vs.page_url AND DATE(vs.visit_time) = ds.date
+        GROUP BY ds.date, ds.page_url, ds.visits
+        HAVING ds.visits != actual_visits
+      `);
+
+      if (inconsistentDaily.length > 0) {
+        results.issues.push(`发现 ${inconsistentDaily.length} 个日期的访问量不一致`);
+        // 修复：更新每日访问量
+        for (const daily of inconsistentDaily) {
+          await pool.execute(`
+            UPDATE daily_stats 
+            SET visits = ? 
+            WHERE date = ? AND page_url = ?
+          `, [daily.actual_visits, daily.date, daily.page_url]);
+        }
+        results.fixes.push(`修复了 ${inconsistentDaily.length} 个日期的访问量`);
+      }
+
+      // 4. 重新计算所有页面的唯一访客数
+      const [allPages] = await pool.execute(`
+        SELECT DISTINCT page_url FROM page_summary
+      `);
+
+      let uniqueVisitorFixes = 0;
+      for (const page of allPages) {
+        // 计算24小时内的唯一访客数
+        const [uniqueCount] = await pool.execute(`
+          SELECT COUNT(DISTINCT visitor_ip) as unique_count
+          FROM visitor_stats 
+          WHERE page_url = ? 
+          AND visit_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        `, [page.page_url]);
+
+        await pool.execute(`
+          UPDATE page_summary 
+          SET unique_visitors = ? 
+          WHERE page_url = ?
+        `, [uniqueCount[0].unique_count, page.page_url]);
+        uniqueVisitorFixes++;
+      }
+
+      if (uniqueVisitorFixes > 0) {
+        results.fixes.push(`重新计算了 ${uniqueVisitorFixes} 个页面的唯一访客数`);
+      }
+
+      console.log('✅ 数据一致性检查完成:', results);
+      return results;
+
+    } catch (error) {
+      console.error('❌ 数据一致性检查失败:', error);
       throw error;
     }
   }

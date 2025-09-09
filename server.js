@@ -211,13 +211,20 @@ app.get('/', (req, res) => {
       'POST /api/messages - 提交留言',
       'GET /api/messages/stats - 获取留言统计（需要认证）',
       'GET /api/messages - 获取所有留言（需要认证）',
+      'GET /api/messages/view - 简单查看留言（无需认证）',
       'GET /api/admin/visits - 获取访问记录（需要认证）',
       'GET /api/tools/:toolId/likes - 获取工具点赞数',
       'POST /api/tools/:toolId/likes - 点赞工具',
       'DELETE /api/tools/:toolId/likes - 取消点赞工具',
       'GET /api/tools/likes/stats - 获取所有工具点赞统计',
       'GET /api/admin/tool-likes - 获取工具点赞记录（需要认证）',
-      'GET /admin - 管理后台界面'
+      'GET /api/debug/database-status - 数据库状态检查',
+      'GET /api/debug/auth-test - 认证测试',
+      'GET /api/debug/timezone - 时区调试信息',
+      'POST /api/debug/fix-database - 数据库修复',
+      'POST /api/debug/check-consistency - 数据一致性检查',
+      'GET /admin - 管理后台界面',
+      'GET /messages - 简单留言查看页面'
     ]
   });
 });
@@ -1074,6 +1081,99 @@ app.get('/api/debug/auth-test', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: error.message
+    });
+  }
+});
+
+// 时区调试接口
+app.get('/api/debug/timezone', async (req, res) => {
+  try {
+    console.log('🕐 时区调试信息');
+    
+    const timezoneInfo = {
+      nodeTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      nodeTime: new Date().toISOString(),
+      nodeLocalTime: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+      nodeToday: new Date().toISOString().split('T')[0],
+      environment: process.env.NODE_ENV || 'development',
+      timestamp: new Date().toISOString()
+    };
+
+    // 获取数据库时区信息
+    if (messagePool) {
+      try {
+        const connection = await messagePool.getConnection();
+        
+        // 获取数据库时区
+        const [dbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
+        const [dbTime] = await connection.execute('SELECT NOW() as db_time, CURDATE() as db_date, UTC_TIMESTAMP() as utc_time');
+        
+        timezoneInfo.database = {
+          timezone: dbTimezone[0].timezone,
+          systemTimezone: dbTimezone[0].system_timezone,
+          dbTime: dbTime[0].db_time,
+          dbDate: dbTime[0].db_date,
+          utcTime: dbTime[0].utc_time
+        };
+        
+        connection.release();
+      } catch (error) {
+        timezoneInfo.database = { error: error.message };
+      }
+    }
+
+    // 获取访问统计数据库时区信息
+    try {
+      const { pool } = require('./database');
+      const connection = await pool.getConnection();
+      
+      const [visitorDbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
+      const [visitorDbTime] = await connection.execute('SELECT NOW() as db_time, CURDATE() as db_date, UTC_TIMESTAMP() as utc_time');
+      
+      timezoneInfo.visitorDatabase = {
+        timezone: visitorDbTimezone[0].timezone,
+        systemTimezone: visitorDbTimezone[0].system_timezone,
+        dbTime: visitorDbTime[0].db_time,
+        dbDate: visitorDbTime[0].db_date,
+        utcTime: visitorDbTime[0].utc_time
+      };
+      
+      connection.release();
+    } catch (error) {
+      timezoneInfo.visitorDatabase = { error: error.message };
+    }
+    
+    console.log('🕐 时区信息:', timezoneInfo);
+    res.json(timezoneInfo);
+    
+  } catch (error) {
+    console.error('❌ 时区调试失败:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// 数据一致性检查和修复接口
+app.post('/api/debug/check-consistency', async (req, res) => {
+  try {
+    console.log('🔍 开始数据一致性检查...');
+    
+    const results = await visitorService.checkAndFixDataConsistency();
+    
+    console.log('✅ 数据一致性检查完成:', results);
+    res.json({
+      success: true,
+      message: '数据一致性检查完成',
+      results
+    });
+    
+  } catch (error) {
+    console.error('❌ 数据一致性检查失败:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
