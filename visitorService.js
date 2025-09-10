@@ -159,11 +159,11 @@ class VisitorService {
         WHERE date = CURDATE()
       `);
       
-      // 获取最近7天访问量
+      // 获取最近7天访问量（含今天，共7天）
       const [weekStats] = await pool.execute(`
         SELECT SUM(visits) as week_visits
         FROM daily_stats 
-        WHERE date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE date BETWEEN DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND CURDATE()
       `);
       
       return {
