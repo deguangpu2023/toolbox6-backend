@@ -4,7 +4,7 @@ class VisitorService {
   constructor() {
     // 简单的内存缓存
     this.cache = new Map();
-    this.cacheTimeout = 5 * 60 * 1000; // 5分钟缓存
+    this.cacheTimeout = 1 * 60 * 1000; // 1分钟缓存，提高数据实时性
   }
 
   // 缓存管理
@@ -147,9 +147,14 @@ class VisitorService {
       const [rows] = await pool.execute(`
         SELECT 
           SUM(total_visits) as total_visits,
-          SUM(unique_visitors) as total_unique_visitors,
           COUNT(*) as total_pages
         FROM page_summary
+      `);
+      
+      // 获取全站独立访客数（所有时间）
+      const [uniqueVisitorsStats] = await pool.execute(`
+        SELECT COUNT(DISTINCT visitor_ip) as total_unique_visitors
+        FROM visitor_stats
       `);
       
       // 获取今日访问量 - 使用MySQL的CURDATE()确保时区一致性
@@ -168,7 +173,7 @@ class VisitorService {
       
       return {
         totalVisits: parseInt(rows[0].total_visits) || 0,
-        totalUniqueVisitors: parseInt(rows[0].total_unique_visitors) || 0,
+        totalUniqueVisitors: parseInt(uniqueVisitorsStats[0].total_unique_visitors) || 0,
         totalPages: parseInt(rows[0].total_pages) || 0,
         todayVisits: parseInt(todayStats[0].today_visits) || 0,
         weekVisits: parseInt(weekStats[0].week_visits) || 0
