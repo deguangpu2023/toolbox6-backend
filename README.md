@@ -60,7 +60,7 @@ ADMIN_API_KEY=your_secret_key_here
 
 ### 4. 创建数据库
 ```bash
-mysql -u root -p < database.sql
+mysql -u root -p < init-db.sql
 ```
 
 或者手动执行SQL脚本：

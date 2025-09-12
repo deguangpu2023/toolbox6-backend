@@ -51,7 +51,8 @@ app.use(cors({
     'http://localhost:3000',
     'https://toolbox6.com',
     'https://www.toolbox6.com',
-    'https://toolbox6-backend-production.up.railway.app/'
+    'https://toolbox6-backend-production.up.railway.app',
+    'https://vue3-production.up.railway.app'
   ],
   credentials: true
 }));
@@ -77,22 +78,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // 静态文件服务
 app.use('/admin', express.static('admin'));
 
-// 简单留言查看页面
-app.get('/messages', (req, res) => {
-  try {
-    console.log('🔍 访问留言查看页面');
-    const filePath = path.join(__dirname, 'messages.html');
-    console.log('文件路径:', filePath);
-    res.sendFile(filePath);
-  } catch (error) {
-    console.error('❌ 发送留言页面失败:', error);
-    res.status(500).json({
-      error: '页面加载失败',
-      message: '无法加载留言查看页面',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
 
 // 获取真实IP地址
 app.use((req, res, next) => {
@@ -105,10 +90,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// 初始化留言板数据库
-async function initMessageDatabase() {
+// 初始化工具点赞数据库
+async function initToolLikesDatabase() {
   try {
-    console.log('🔧 初始化留言板数据库...');
+    console.log('🔧 初始化工具点赞数据库...');
     console.log('数据库配置:', {
       host: dbConfig.host,
       user: dbConfig.user,
@@ -125,25 +110,7 @@ async function initMessageDatabase() {
 
     // 测试连接
     const connection = await messagePool.getConnection();
-    console.log('✅ 留言板数据库连接成功');
-    
-    // 创建消息表（如果不存在）
-    console.log('📝 创建消息表...');
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        message TEXT NOT NULL,
-        ip_address VARCHAR(45),
-        user_agent TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_created_at (created_at),
-        INDEX idx_email (email)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    console.log('✅ 消息表创建/检查完成');
+    console.log('✅ 工具点赞数据库连接成功');
     
     // 创建工具点赞表（如果不存在）
     console.log('👍 创建工具点赞表...');
@@ -167,15 +134,15 @@ async function initMessageDatabase() {
       SELECT TABLE_NAME 
       FROM information_schema.TABLES 
       WHERE TABLE_SCHEMA = ? 
-      AND TABLE_NAME IN ('messages', 'tool_likes')
+      AND TABLE_NAME IN ('tool_likes')
     `, [dbConfig.database]);
     
     console.log('📊 已创建的表:', tables.map(t => t.TABLE_NAME));
     
     connection.release();
-    console.log('✅ 留言板数据库初始化完成');
+    console.log('✅ 工具点赞数据库初始化完成');
   } catch (error) {
-    console.error('❌ 留言板数据库连接失败:', error);
+    console.error('❌ 工具点赞数据库连接失败:', error);
     console.error('错误详情:', {
       message: error.message,
       code: error.code,
@@ -208,10 +175,6 @@ app.get('/', (req, res) => {
       'GET /api/stats/top-pages - 获取热门页面',
       'GET /api/stats/trend - 获取访问趋势',
       'POST /api/admin/cleanup - 清理旧数据（需要API密钥）',
-      'POST /api/messages - 提交留言',
-      'GET /api/messages/stats - 获取留言统计（需要认证）',
-      'GET /api/messages - 获取所有留言（需要认证）',
-      'GET /api/messages/view - 简单查看留言（无需认证）',
       'GET /api/admin/visits - 获取访问记录（需要认证）',
       'GET /api/tools/:toolId/likes - 获取工具点赞数',
       'POST /api/tools/:toolId/likes - 点赞工具',
@@ -224,7 +187,6 @@ app.get('/', (req, res) => {
       'POST /api/debug/fix-database - 数据库修复',
       'POST /api/debug/check-consistency - 数据一致性检查',
       'GET /admin - 管理后台界面',
-      'GET /messages - 简单留言查看页面'
     ]
   });
 });
@@ -249,18 +211,18 @@ app.get('/health', async (req, res) => {
       health.services.visitorDatabase = 'ERROR';
     }
 
-    // 检查留言板数据库
+    // 检查工具点赞数据库
     try {
       if (messagePool) {
         const connection = await messagePool.getConnection();
         await connection.execute('SELECT 1');
         connection.release();
-        health.services.messageDatabase = 'OK';
+        health.services.toolLikesDatabase = 'OK';
       } else {
-        health.services.messageDatabase = 'NOT_INITIALIZED';
+        health.services.toolLikesDatabase = 'NOT_INITIALIZED';
       }
     } catch (error) {
-      health.services.messageDatabase = 'ERROR';
+      health.services.toolLikesDatabase = 'ERROR';
     }
 
     // 如果任何服务有问题，返回503状态
@@ -489,317 +451,6 @@ app.post('/api/admin/cleanup', async (req, res) => {
   }
 });
 
-// 留言板API路由
-
-// 提交留言
-app.post('/api/messages', async (req, res) => {
-  try {
-    const { name, email, message, timestamp, userAgent } = req.body;
-    
-    // 输入验证
-    if (!name || !email || !message) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        chinese: '缺少必填字段'
-      });
-    }
-
-    // 验证邮箱格式
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        error: 'Invalid email format',
-        chinese: '邮箱格式不正确'
-      });
-    }
-
-    // 验证输入长度
-    if (name.length > 100 || email.length > 255 || message.length > 1000) {
-      return res.status(400).json({
-        error: 'Input too long',
-        chinese: '输入内容过长'
-      });
-    }
-
-    // 获取客户端IP
-    const clientIP = req.realIP;
-
-    // 插入数据库
-    const [result] = await messagePool.execute(
-      'INSERT INTO messages (name, email, message, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)',
-      [name.trim(), email.trim(), message.trim(), clientIP, userAgent || req.get('User-Agent')]
-    );
-
-    console.log(`✅ 新留言已保存: ID=${result.insertId}, 姓名=${name}, 邮箱=${email}`);
-
-    res.status(201).json({
-      success: true,
-      message: 'Message submitted successfully',
-      chinese: '留言提交成功',
-      id: result.insertId
-    });
-
-  } catch (error) {
-    console.error('❌ 保存留言失败:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误'
-    });
-  }
-});
-
-// 获取留言统计（仅用于管理）
-app.get('/api/messages/stats', async (req, res) => {
-  try {
-    console.log('🔍 获取留言统计请求');
-    
-    // 简单的认证检查（在实际应用中应该使用更安全的认证方式）
-    const authHeader = req.headers.authorization;
-    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
-    
-    console.log('认证头:', authHeader ? '已提供' : '未提供');
-    console.log('期望令牌:', expectedToken);
-    console.log('环境变量ADMIN_TOKEN:', process.env.ADMIN_TOKEN || '未设置');
-    
-    if (!authHeader || authHeader !== expectedToken) {
-      console.log('❌ 认证失败');
-      return res.status(401).json({
-        error: 'Unauthorized',
-        chinese: '未授权访问'
-      });
-    }
-
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    const [rows] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
-    const [recentRows] = await messagePool.execute(
-      'SELECT COUNT(*) as recent FROM messages WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)'
-    );
-
-    console.log('✅ 留言统计获取成功');
-
-    res.json({
-      total: rows[0].total,
-      recent: recentRows[0].recent
-    });
-
-  } catch (error) {
-    console.error('❌ 获取统计信息失败:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// 简单查看留言内容（无需认证）
-app.get('/api/messages/view', async (req, res) => {
-  try {
-    console.log('🔍 简单查看留言请求');
-    console.log('请求参数:', req.query);
-    console.log('请求头:', req.headers);
-    
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
-
-    console.log(`📊 查看留言: page=${page}, limit=${limit}, offset=${offset}`);
-
-    // 测试数据库连接
-    console.log('🔍 测试数据库连接...');
-    try {
-      const [testResult] = await messagePool.execute('SELECT 1 as test');
-      console.log('✅ 数据库连接测试成功:', testResult);
-    } catch (testError) {
-      console.error('❌ 数据库连接测试失败:', testError);
-      return res.status(500).json({
-        error: 'Database connection failed',
-        chinese: '数据库连接失败',
-        details: process.env.NODE_ENV === 'development' ? testError.message : undefined
-      });
-    }
-
-    // 检查表是否存在
-    console.log('🔍 检查messages表是否存在...');
-    try {
-      const [tableCheck] = await messagePool.execute("SHOW TABLES LIKE 'messages'");
-      console.log('📋 表检查结果:', tableCheck);
-      if (tableCheck.length === 0) {
-        console.error('❌ messages表不存在');
-        return res.status(500).json({
-          error: 'Table not found',
-          chinese: '数据表不存在',
-          details: 'messages表未找到，请检查数据库初始化'
-        });
-      }
-    } catch (tableError) {
-      console.error('❌ 表检查失败:', tableError);
-      return res.status(500).json({
-        error: 'Table check failed',
-        chinese: '表检查失败',
-        details: process.env.NODE_ENV === 'development' ? tableError.message : undefined
-      });
-    }
-
-    // 获取留言列表
-    console.log('🔍 执行留言查询...');
-    const [messages] = await messagePool.execute(
-      'SELECT id, name, email, message, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [limit, offset]
-    );
-    console.log(`📊 查询到 ${messages.length} 条留言记录`);
-
-    // 获取总数
-    console.log('🔍 执行计数查询...');
-    const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
-    const total = countResult[0] ? countResult[0].total : 0;
-    console.log(`📈 总留言数: ${total}`);
-
-    console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
-
-    res.json({
-      success: true,
-      data: {
-        messages,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit)
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ 查看留言失败:', error);
-    console.error('错误详情:', {
-      message: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// 获取所有留言（仅用于管理）
-app.get('/api/messages', async (req, res) => {
-  try {
-    console.log('🔍 获取留言列表请求');
-    console.log('请求头:', req.headers);
-    console.log('查询参数:', req.query);
-    
-    // 简单的认证检查
-    const authHeader = req.headers.authorization;
-    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
-    
-    console.log('认证头:', authHeader ? '已提供' : '未提供');
-    console.log('期望令牌:', expectedToken);
-    console.log('环境变量ADMIN_TOKEN:', process.env.ADMIN_TOKEN || '未设置');
-    
-    if (!authHeader || authHeader !== expectedToken) {
-      console.log('❌ 认证失败');
-      return res.status(401).json({
-        error: 'Unauthorized',
-        chinese: '未授权访问'
-      });
-    }
-
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
-
-    console.log(`📊 获取留言列表: page=${page}, limit=${limit}, offset=${offset}`);
-
-    // 直接使用连接池执行查询（与留言统计API保持一致）
-    try {
-      // 获取留言列表
-      console.log('🔍 执行留言查询...');
-      const [messages] = await messagePool.execute(
-        'SELECT id, name, email, message, ip_address, user_agent, created_at FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?',
-        [limit, offset]
-      );
-      console.log(`📊 查询到 ${messages.length} 条留言记录`);
-
-      // 获取总数
-      console.log('🔍 执行计数查询...');
-      const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM messages');
-      const total = countResult[0] ? countResult[0].total : 0;
-      console.log(`📈 总留言数: ${total}`);
-
-      console.log(`✅ 获取到 ${messages.length} 条留言，总计 ${total} 条`);
-
-      res.json({
-        success: true,
-        data: {
-          messages,
-          pagination: {
-            page,
-            limit,
-            total,
-            totalPages: Math.ceil(total / limit)
-          }
-        }
-      });
-
-    } catch (dbError) {
-      console.error('❌ 数据库查询失败:', dbError);
-      return res.status(500).json({
-        error: 'Database query failed',
-        chinese: '数据库查询失败',
-        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ 获取留言列表失败:', error);
-    console.error('错误详情:', {
-      message: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
 
 // 工具点赞API路由
 
@@ -1040,7 +691,7 @@ app.get('/api/debug/database-status', async (req, res) => {
           SELECT TABLE_NAME 
           FROM information_schema.TABLES 
           WHERE TABLE_SCHEMA = ? 
-          AND TABLE_NAME IN ('messages', 'tool_likes')
+          AND TABLE_NAME IN ('tool_likes')
         `, [dbConfig.database]);
         
         status.tables = tables.map(t => t.TABLE_NAME);
@@ -1198,30 +849,6 @@ app.post('/api/debug/fix-database', async (req, res) => {
     try {
       const connection = await messagePool.getConnection();
       
-      // 检查并创建 messages 表
-      try {
-        await connection.execute(`
-          CREATE TABLE IF NOT EXISTS messages (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(100) NOT NULL,
-            email VARCHAR(255) NOT NULL,
-            message TEXT NOT NULL,
-            ip_address VARCHAR(45),
-            user_agent TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_created_at (created_at),
-            INDEX idx_email (email)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
-        results.tables.messages = 'OK';
-        console.log('✅ messages 表检查/创建完成');
-      } catch (error) {
-        results.tables.messages = 'ERROR';
-        results.errors.push(`messages 表错误: ${error.message}`);
-        console.error('❌ messages 表错误:', error);
-      }
-
       // 检查并创建 tool_likes 表
       try {
         await connection.execute(`
@@ -1250,7 +877,7 @@ app.post('/api/debug/fix-database', async (req, res) => {
         SELECT TABLE_NAME 
         FROM information_schema.TABLES 
         WHERE TABLE_SCHEMA = ? 
-        AND TABLE_NAME IN ('messages', 'tool_likes')
+        AND TABLE_NAME IN ('tool_likes')
       `, [dbConfig.database]);
       
       results.existingTables = tables.map(t => t.TABLE_NAME);
@@ -1382,9 +1009,6 @@ app.use('*', (req, res) => {
       'GET /api/stats/top-pages - 获取热门页面',
       'GET /api/stats/trend - 获取访问趋势',
       'POST /api/admin/cleanup - 清理旧数据（需要API密钥）',
-      'POST /api/messages - 提交留言',
-      'GET /api/messages/stats - 获取留言统计（需要认证）',
-      'GET /api/messages - 获取所有留言（需要认证）',
       'GET /api/admin/visits - 获取访问记录（需要认证）',
       'GET /api/tools/:toolId/likes - 获取工具点赞数',
       'POST /api/tools/:toolId/likes - 点赞工具',
@@ -1424,10 +1048,10 @@ async function startServer() {
     await initDatabase();
     console.log('✅ 访问统计数据库初始化完成');
     
-    // 初始化留言板数据库
-    console.log('🔧 初始化留言板数据库...');
-    await initMessageDatabase();
-    console.log('✅ 留言板数据库初始化完成');
+    // 初始化工具点赞数据库
+    console.log('🔧 初始化工具点赞数据库...');
+    await initToolLikesDatabase();
+    console.log('✅ 工具点赞数据库初始化完成');
     
     // 启动HTTP服务器
     app.listen(PORT, () => {
@@ -1436,7 +1060,6 @@ async function startServer() {
       console.log(`📊 健康检查: http://localhost:${PORT}/health`);
       console.log(`🌍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`⏰ 启动时间: ${new Date().toLocaleString('zh-CN')}`);
-      console.log(`💬 留言板功能已启用`);
       console.log(`👍 工具点赞功能已启用`);
     });
     
