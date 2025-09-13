@@ -100,7 +100,7 @@ async function initDatabase() {
         '/home', '/colorto', '/colorpicker', '/colorcompare', '/commoncolors',
         '/imagetoico', '/imagetowebp', '/beautygallery', '/baby', '/EmojiPicker',
         '/muyu', '/worldtime', '/subtitle', '/ztpool', '/list', '/marketindex',
-        '/Firework', '/blackcat', '/runner', '/redfish', '/handwriting'
+        '/Firework', '/blackcat', '/runner', '/redfish', '/handwriting','/aitoolbox'
       ];
       
       for (const page of pages) {
