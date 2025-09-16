@@ -781,8 +781,8 @@ app.get('/api/debug/daily-stats', async (req, res) => {
       ORDER BY date DESC
     `);
     
-    // 获取数据库当前时间
-    const [dbTime] = await connection.execute('SELECT NOW() as current_time, CURDATE() as current_date');
+    // 获取数据库当前时间（避免别名与保留关键字冲突）
+    const [dbTime] = await connection.execute('SELECT NOW() as db_now, CURDATE() as db_date, UTC_TIMESTAMP() as db_utc');
     
     connection.release();
     
