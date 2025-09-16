@@ -184,7 +184,9 @@ app.get('/', (req, res) => {
       'GET /api/debug/database-status - 数据库状态检查',
       'GET /api/debug/auth-test - 认证测试',
       'GET /api/debug/timezone - 时区调试信息',
+      'GET /api/debug/daily-stats - 每日统计调试信息',
       'POST /api/debug/fix-database - 数据库修复',
+      'POST /api/debug/fix-daily-stats - 修复每日统计',
       'POST /api/debug/check-consistency - 数据一致性检查',
       'GET /admin - 管理后台界面',
     ]
@@ -736,6 +738,73 @@ app.get('/api/debug/auth-test', async (req, res) => {
   }
 });
 
+// 每日统计调试接口
+app.get('/api/debug/daily-stats', async (req, res) => {
+  try {
+    console.log('🔍 每日统计调试信息');
+    
+    const { testConnection } = require('./database');
+    const dbConnected = await testConnection();
+    
+    if (!dbConnected) {
+      return res.status(500).json({
+        error: 'Database not connected',
+        chinese: '数据库未连接'
+      });
+    }
+
+    const { pool } = require('./database');
+    const connection = await pool.getConnection();
+    
+    // 获取今日统计
+    const [todayStats] = await connection.execute(`
+      SELECT 
+        date,
+        page_url,
+        visits,
+        unique_visitors
+      FROM daily_stats 
+      WHERE date = CURDATE()
+      ORDER BY visits DESC
+    `);
+    
+    // 获取最近7天的统计
+    const [weekStats] = await connection.execute(`
+      SELECT 
+        date,
+        SUM(visits) as total_visits,
+        SUM(unique_visitors) as total_unique_visitors
+      FROM daily_stats 
+      WHERE date BETWEEN DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND CURDATE()
+      GROUP BY date
+      ORDER BY date DESC
+    `);
+    
+    // 获取数据库当前时间
+    const [dbTime] = await connection.execute('SELECT NOW() as current_time, CURDATE() as current_date');
+    
+    connection.release();
+    
+    res.json({
+      success: true,
+      data: {
+        databaseTime: dbTime[0],
+        todayStats: todayStats,
+        weekStats: weekStats,
+        totalTodayRecords: todayStats.length,
+        totalWeekRecords: weekStats.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ 每日统计调试失败:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // 时区调试接口
 app.get('/api/debug/timezone', async (req, res) => {
   try {
@@ -799,6 +868,86 @@ app.get('/api/debug/timezone', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 时区调试失败:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// 修复每日统计接口
+app.post('/api/debug/fix-daily-stats', async (req, res) => {
+  try {
+    console.log('🔧 开始修复每日统计...');
+    
+    const { testConnection } = require('./database');
+    const dbConnected = await testConnection();
+    
+    if (!dbConnected) {
+      return res.status(500).json({
+        error: 'Database not connected',
+        chinese: '数据库未连接'
+      });
+    }
+
+    const { pool } = require('./database');
+    const connection = await pool.getConnection();
+    
+    // 获取所有页面
+    const [pages] = await connection.execute('SELECT DISTINCT page_url FROM page_summary');
+    
+    let fixedCount = 0;
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
+    
+    for (const page of pages) {
+      const pageUrl = page.page_url;
+      
+      // 计算今日访问量
+      const [visitsResult] = await connection.execute(`
+        SELECT COUNT(*) as visits
+        FROM visitor_stats 
+        WHERE page_url = ? 
+        AND DATE(visit_time) = CURDATE()
+      `, [pageUrl]);
+      
+      // 计算今日唯一访客数
+      const [uniqueResult] = await connection.execute(`
+        SELECT COUNT(DISTINCT visitor_ip) as unique_visitors
+        FROM visitor_stats 
+        WHERE page_url = ? 
+        AND DATE(visit_time) = CURDATE()
+      `, [pageUrl]);
+      
+      const visits = visitsResult[0].visits;
+      const uniqueVisitors = uniqueResult[0].unique_visitors;
+      
+      // 更新或插入每日统计
+      await connection.execute(`
+        INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
+        VALUES (CURDATE(), ?, ?, ?)
+        ON DUPLICATE KEY UPDATE 
+          visits = VALUES(visits),
+          unique_visitors = VALUES(unique_visitors)
+      `, [pageUrl, visits, uniqueVisitors]);
+      
+      if (visits > 0) {
+        fixedCount++;
+        console.log(`✅ 修复页面 ${pageUrl}: ${visits} 次访问, ${uniqueVisitors} 个唯一访客`);
+      }
+    }
+    
+    connection.release();
+    
+    console.log(`✅ 每日统计修复完成，修复了 ${fixedCount} 个页面`);
+    res.json({
+      success: true,
+      message: `每日统计修复完成，修复了 ${fixedCount} 个页面`,
+      fixedCount: fixedCount,
+      totalPages: pages.length
+    });
+    
+  } catch (error) {
+    console.error('❌ 修复每日统计失败:', error);
     res.status(500).json({
       error: error.message,
       timestamp: new Date().toISOString()

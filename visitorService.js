@@ -64,7 +64,15 @@ class VisitorService {
       `, [uniqueVisitors[0].unique_count, pageUrl]);
       
       // 5. 更新每日统计 - 使用MySQL的时区函数确保一致性
-      // 计算今日该页面的唯一访客数
+      // 先尝试插入或更新每日访问记录
+      await connection.execute(`
+        INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
+        VALUES (CURDATE(), ?, 1, 0)
+        ON DUPLICATE KEY UPDATE 
+          visits = visits + 1
+      `, [pageUrl]);
+      
+      // 然后重新计算今日该页面的唯一访客数
       const [todayUniqueVisitors] = await connection.execute(`
         SELECT COUNT(DISTINCT visitor_ip) as today_unique_count
         FROM visitor_stats 
@@ -72,13 +80,12 @@ class VisitorService {
         AND DATE(visit_time) = CURDATE()
       `, [pageUrl]);
       
+      // 更新唯一访客数
       await connection.execute(`
-        INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
-        VALUES (CURDATE(), ?, 1, ?)
-        ON DUPLICATE KEY UPDATE 
-          visits = visits + 1,
-          unique_visitors = VALUES(unique_visitors)
-      `, [pageUrl, todayUniqueVisitors[0].today_unique_count]);
+        UPDATE daily_stats 
+        SET unique_visitors = ?
+        WHERE date = CURDATE() AND page_url = ?
+      `, [todayUniqueVisitors[0].today_unique_count, pageUrl]);
       
       await connection.commit();
       
