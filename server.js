@@ -783,7 +783,7 @@ app.get('/api/debug/daily-stats', async (req, res) => {
     `);
     
     // 获取数据库当前时间（避免别名与保留关键字冲突）
-    const [dbTime] = await connection.execute('SELECT NOW() as db_now, DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')) as db_date, UTC_TIMESTAMP() as db_utc');
+    const [dbTime] = await connection.execute('SELECT NOW() as db_now, DATE(CONVERT_TZ(UTC_TIMESTAMP(), \'+00:00\', \'+08:00\')) as db_date, UTC_TIMESTAMP() as db_utc');
     
     connection.release();
     
@@ -828,7 +828,7 @@ app.get('/api/debug/timezone', async (req, res) => {
         
         // 获取数据库时区
         const [dbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
-        const [dbTime] = await connection.execute('SELECT NOW() as db_time, DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')) as db_date, UTC_TIMESTAMP() as `utc_time`');
+        const [dbTime] = await connection.execute('SELECT NOW() as db_time, DATE(CONVERT_TZ(UTC_TIMESTAMP(), \'+00:00\', \'+08:00\')) as db_date, UTC_TIMESTAMP() as `utc_time`');
         
         timezoneInfo.database = {
           timezone: dbTimezone[0].timezone,
@@ -850,7 +850,7 @@ app.get('/api/debug/timezone', async (req, res) => {
       const connection = await pool.getConnection();
       
       const [visitorDbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
-      const [visitorDbTime] = await connection.execute('SELECT NOW() as db_time, DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')) as db_date, UTC_TIMESTAMP() as `utc_time`');
+      const [visitorDbTime] = await connection.execute('SELECT NOW() as db_time, DATE(CONVERT_TZ(UTC_TIMESTAMP(), \'+00:00\', \'+08:00\')) as db_date, UTC_TIMESTAMP() as `utc_time`');
       
       timezoneInfo.visitorDatabase = {
         timezone: visitorDbTimezone[0].timezone,
