@@ -188,6 +188,7 @@ app.get('/', (req, res) => {
       'POST /api/debug/fix-database - 数据库修复',
       'POST /api/debug/fix-daily-stats - 修复每日统计',
       'POST /api/debug/check-consistency - 数据一致性检查',
+      'POST /api/debug/reinit-today-stats - 重新初始化今日统计',
       'GET /admin - 管理后台界面',
     ]
   });
@@ -827,14 +828,14 @@ app.get('/api/debug/timezone', async (req, res) => {
         
         // 获取数据库时区
         const [dbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
-        const [dbTime] = await connection.execute('SELECT NOW() as db_time, CURDATE() as db_date, UTC_TIMESTAMP() as utc_time');
+        const [dbTime] = await connection.execute('SELECT NOW() as db_time, CURDATE() as db_date, UTC_TIMESTAMP() as `utc_time`');
         
         timezoneInfo.database = {
           timezone: dbTimezone[0].timezone,
           systemTimezone: dbTimezone[0].system_timezone,
           dbTime: dbTime[0].db_time,
           dbDate: dbTime[0].db_date,
-          utcTime: dbTime[0].utc_time
+          utcTime: dbTime[0]['utc_time']
         };
         
         connection.release();
@@ -849,14 +850,14 @@ app.get('/api/debug/timezone', async (req, res) => {
       const connection = await pool.getConnection();
       
       const [visitorDbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
-      const [visitorDbTime] = await connection.execute('SELECT NOW() as db_time, CURDATE() as db_date, UTC_TIMESTAMP() as utc_time');
+      const [visitorDbTime] = await connection.execute('SELECT NOW() as db_time, CURDATE() as db_date, UTC_TIMESTAMP() as `utc_time`');
       
       timezoneInfo.visitorDatabase = {
         timezone: visitorDbTimezone[0].timezone,
         systemTimezone: visitorDbTimezone[0].system_timezone,
         dbTime: visitorDbTime[0].db_time,
         dbDate: visitorDbTime[0].db_date,
-        utcTime: visitorDbTime[0].utc_time
+        utcTime: visitorDbTime[0]['utc_time']
       };
       
       connection.release();
@@ -972,6 +973,84 @@ app.post('/api/debug/check-consistency', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 数据一致性检查失败:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// 重新初始化今日统计数据接口
+app.post('/api/debug/reinit-today-stats', async (req, res) => {
+  try {
+    console.log('🔧 开始重新初始化今日统计数据...');
+    
+    const { testConnection } = require('./database');
+    const dbConnected = await testConnection();
+    
+    if (!dbConnected) {
+      return res.status(500).json({
+        error: 'Database not connected',
+        chinese: '数据库未连接'
+      });
+    }
+
+    const { pool } = require('./database');
+    const connection = await pool.getConnection();
+    
+    // 获取所有页面
+    const [pages] = await connection.execute('SELECT DISTINCT page_url FROM page_summary');
+    
+    let processedCount = 0;
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式
+    
+    for (const page of pages) {
+      const pageUrl = page.page_url;
+      
+      // 计算今日访问量（直接从visitor_stats表计算）
+      const [visitsResult] = await connection.execute(`
+        SELECT COUNT(*) as visits
+        FROM visitor_stats 
+        WHERE page_url = ? 
+        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+      `, [pageUrl]);
+      
+      // 计算今日唯一访客数
+      const [uniqueResult] = await connection.execute(`
+        SELECT COUNT(DISTINCT visitor_ip) as unique_visitors
+        FROM visitor_stats 
+        WHERE page_url = ? 
+        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+      `, [pageUrl]);
+      
+      const visits = visitsResult[0].visits;
+      const uniqueVisitors = uniqueResult[0].unique_visitors;
+      
+      // 更新或插入每日统计
+      await connection.execute(`
+        INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
+        VALUES (DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), ?, ?, ?)
+        ON DUPLICATE KEY UPDATE 
+          visits = VALUES(visits),
+          unique_visitors = VALUES(unique_visitors)
+      `, [pageUrl, visits, uniqueVisitors]);
+      
+      processedCount++;
+      console.log(`✅ 处理页面 ${pageUrl}: ${visits} 次访问, ${uniqueVisitors} 个唯一访客`);
+    }
+    
+    connection.release();
+    
+    console.log(`✅ 今日统计数据重新初始化完成，处理了 ${processedCount} 个页面`);
+    res.json({
+      success: true,
+      message: `今日统计数据重新初始化完成，处理了 ${processedCount} 个页面`,
+      processedCount: processedCount,
+      totalPages: pages.length
+    });
+    
+  } catch (error) {
+    console.error('❌ 重新初始化今日统计失败:', error);
     res.status(500).json({
       error: error.message,
       timestamp: new Date().toISOString()

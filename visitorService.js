@@ -166,14 +166,14 @@ class VisitorService {
       
       // 获取今日访问量 - 东八区
       const [todayStats] = await pool.execute(`
-        SELECT SUM(visits) as today_visits
+        SELECT COALESCE(SUM(visits), 0) as today_visits
         FROM daily_stats 
         WHERE date = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
       `);
       
       // 获取最近7天访问量（含今天，共7天） - 东八区
       const [weekStats] = await pool.execute(`
-        SELECT SUM(visits) as week_visits
+        SELECT COALESCE(SUM(visits), 0) as week_visits
         FROM daily_stats 
         WHERE date BETWEEN DATE_SUB(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), INTERVAL 6 DAY)
                      AND DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
