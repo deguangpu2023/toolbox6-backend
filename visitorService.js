@@ -63,11 +63,11 @@ class VisitorService {
         WHERE page_url = ?
       `, [uniqueVisitors[0].unique_count, pageUrl]);
       
-      // 5. 更新每日统计 - 使用MySQL的时区函数确保一致性
-      // 先尝试插入或更新每日访问记录（按东八区日期聚合）
+      // 5. 更新每日统计 - 使用MySQL的当前日期
+      // 先尝试插入或更新每日访问记录（按当前日期聚合）
       await connection.execute(`
         INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
-        VALUES (DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), ?, 1, 0)
+        VALUES (CURDATE(), ?, 1, 0)
         ON DUPLICATE KEY UPDATE 
           visits = visits + 1
       `, [pageUrl]);
@@ -77,14 +77,14 @@ class VisitorService {
         SELECT COUNT(DISTINCT visitor_ip) as today_unique_count
         FROM visitor_stats 
         WHERE page_url = ? 
-        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        AND DATE(visit_time) = CURDATE()
       `, [pageUrl]);
       
       // 更新唯一访客数
       await connection.execute(`
         UPDATE daily_stats 
         SET unique_visitors = ?
-        WHERE date = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')) AND page_url = ?
+        WHERE date = CURDATE() AND page_url = ?
       `, [todayUniqueVisitors[0].today_unique_count, pageUrl]);
       
       await connection.commit();
@@ -168,15 +168,14 @@ class VisitorService {
       const [todayStats] = await pool.execute(`
         SELECT COALESCE(SUM(visits), 0) as today_visits
         FROM daily_stats 
-        WHERE date = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        WHERE date = CURDATE()
       `);
       
       // 获取最近7天访问量（含今天，共7天） - 东八区
       const [weekStats] = await pool.execute(`
         SELECT COALESCE(SUM(visits), 0) as week_visits
         FROM daily_stats 
-        WHERE date BETWEEN DATE_SUB(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), INTERVAL 6 DAY)
-                     AND DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        WHERE date BETWEEN DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND CURDATE()
       `);
       
       return {

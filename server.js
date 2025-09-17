@@ -765,7 +765,7 @@ app.get('/api/debug/daily-stats', async (req, res) => {
         visits,
         unique_visitors
       FROM daily_stats 
-      WHERE date = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+      WHERE date = CURDATE()
       ORDER BY visits DESC
     `);
     
@@ -776,8 +776,8 @@ app.get('/api/debug/daily-stats', async (req, res) => {
         SUM(visits) as total_visits,
         SUM(unique_visitors) as total_unique_visitors
       FROM daily_stats 
-      WHERE date BETWEEN DATE_SUB(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), INTERVAL 6 DAY) 
-                   AND DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+      WHERE date BETWEEN DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
+                   AND CURDATE()
       GROUP BY date
       ORDER BY date DESC
     `);
@@ -909,7 +909,7 @@ app.post('/api/debug/fix-daily-stats', async (req, res) => {
         SELECT COUNT(*) as visits
         FROM visitor_stats 
         WHERE page_url = ? 
-        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        AND DATE(visit_time) = CURDATE()
       `, [pageUrl]);
       
       // 计算今日唯一访客数
@@ -917,7 +917,7 @@ app.post('/api/debug/fix-daily-stats', async (req, res) => {
         SELECT COUNT(DISTINCT visitor_ip) as unique_visitors
         FROM visitor_stats 
         WHERE page_url = ? 
-        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        AND DATE(visit_time) = CURDATE()
       `, [pageUrl]);
       
       const visits = visitsResult[0].visits;
@@ -926,7 +926,7 @@ app.post('/api/debug/fix-daily-stats', async (req, res) => {
       // 更新或插入每日统计
       await connection.execute(`
         INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
-        VALUES (DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), ?, ?, ?)
+        VALUES (CURDATE(), ?, ?, ?)
         ON DUPLICATE KEY UPDATE 
           visits = VALUES(visits),
           unique_visitors = VALUES(unique_visitors)
@@ -1012,7 +1012,7 @@ app.post('/api/debug/reinit-today-stats', async (req, res) => {
         SELECT COUNT(*) as visits
         FROM visitor_stats 
         WHERE page_url = ? 
-        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        AND DATE(visit_time) = CURDATE()
       `, [pageUrl]);
       
       // 计算今日唯一访客数
@@ -1020,7 +1020,7 @@ app.post('/api/debug/reinit-today-stats', async (req, res) => {
         SELECT COUNT(DISTINCT visitor_ip) as unique_visitors
         FROM visitor_stats 
         WHERE page_url = ? 
-        AND DATE(CONVERT_TZ(visit_time, '+00:00', '+08:00')) = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
+        AND DATE(visit_time) = CURDATE()
       `, [pageUrl]);
       
       const visits = visitsResult[0].visits;
@@ -1029,7 +1029,7 @@ app.post('/api/debug/reinit-today-stats', async (req, res) => {
       // 更新或插入每日统计
       await connection.execute(`
         INSERT INTO daily_stats (date, page_url, visits, unique_visitors)
-        VALUES (DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), ?, ?, ?)
+        VALUES (CURDATE(), ?, ?, ?)
         ON DUPLICATE KEY UPDATE 
           visits = VALUES(visits),
           unique_visitors = VALUES(unique_visitors)
