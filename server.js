@@ -180,6 +180,7 @@ app.get('/', (req, res) => {
       'POST /api/tools/:toolId/likes - 点赞工具',
       'DELETE /api/tools/:toolId/likes - 取消点赞工具',
       'GET /api/tools/likes/stats - 获取所有工具点赞统计',
+      'POST /api/tools/batch-likes - 批量获取工具点赞数',
       'GET /api/admin/tool-likes - 获取工具点赞记录（需要认证）',
       'GET /api/debug/database-status - 数据库状态检查',
       'GET /api/debug/auth-test - 认证测试',
@@ -667,6 +668,87 @@ app.get('/api/tools/likes/stats', async (req, res) => {
     res.status(500).json({
       error: 'Internal server error',
       chinese: '服务器内部错误'
+    });
+  }
+});
+
+// 批量获取工具点赞数接口
+app.post('/api/tools/batch-likes', async (req, res) => {
+  try {
+    const { toolIds } = req.body;
+    
+    // 验证请求参数
+    if (!Array.isArray(toolIds) || toolIds.length === 0) {
+      return res.status(400).json({
+        error: 'toolIds must be a non-empty array',
+        chinese: 'toolIds 必须是非空数组'
+      });
+    }
+    
+    // 限制批量请求的数量，避免过大的请求
+    if (toolIds.length > 100) {
+      return res.status(400).json({
+        error: 'Too many toolIds requested. Maximum 100 allowed.',
+        chinese: '请求的工具ID过多，最多允许100个'
+      });
+    }
+    
+    // 检查数据库连接池是否存在
+    if (!messagePool) {
+      console.error('❌ 数据库连接池未初始化');
+      return res.status(500).json({
+        error: 'Database not initialized',
+        chinese: '数据库未初始化'
+      });
+    }
+
+    console.log(`🔍 批量获取工具点赞数: ${toolIds.length} 个工具`);
+    
+    const result = {};
+    
+    // 批量获取点赞数
+    for (const toolId of toolIds) {
+      try {
+        const [rows] = await messagePool.execute(
+          'SELECT COUNT(*) as count FROM tool_likes WHERE tool_id = ?',
+          [toolId]
+        );
+        
+        const count = rows[0] ? rows[0].count : 0;
+        result[toolId] = count;
+        
+        console.log(`✅ 工具 ${toolId} 点赞数: ${count}`);
+      } catch (error) {
+        console.error(`❌ 获取工具 ${toolId} 点赞数失败:`, error);
+        result[toolId] = 0; // 出错时返回0
+      }
+    }
+    
+    console.log(`✅ 批量获取完成，处理了 ${Object.keys(result).length} 个工具`);
+    
+    res.json({
+      success: true,
+      likes: result,
+      count: Object.keys(result).length,
+      requestedCount: toolIds.length,
+      timestamp: new Date().toISOString(),
+      message: 'Batch likes retrieved successfully',
+      chinese: '批量获取点赞数成功'
+    });
+
+  } catch (error) {
+    console.error('❌ 批量获取工具点赞数失败:', error);
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState
+    });
+    
+    res.status(500).json({
+      error: 'Internal server error',
+      chinese: '服务器内部错误',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -1243,6 +1325,7 @@ app.use('*', (req, res) => {
       'POST /api/tools/:toolId/likes - 点赞工具',
       'DELETE /api/tools/:toolId/likes - 取消点赞工具',
       'GET /api/tools/likes/stats - 获取所有工具点赞统计',
+      'POST /api/tools/batch-likes - 批量获取工具点赞数',
       'GET /api/admin/tool-likes - 获取工具点赞记录（需要认证）',
       'GET /admin - 管理后台界面'
     ]
