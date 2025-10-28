@@ -52,7 +52,9 @@ app.use(cors({
     'https://toolbox6.com',
     'https://www.toolbox6.com',
     'https://toolbox6-backend-production.up.railway.app',
-    'https://vue3-production.up.railway.app'
+    'https://vue3-production.up.railway.app',
+    'https://rgbtoo.xyz',
+    'https://www.rgbtoo.xyz'
   ],
   credentials: true
 }));
