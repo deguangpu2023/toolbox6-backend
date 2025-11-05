@@ -339,23 +339,21 @@
                     <div class="label">已统计页面</div>
                 </div>
                 <div class="stat-card">
-                    <h3>💬 留言总数</h3>
-                    <div class="number" id="totalMessages">-</div>
-                    <div class="label">用户留言</div>
+                    <h3>📅 今日访问</h3>
+                    <div class="number" id="todayVisits">-</div>
+                    <div class="label">今日访问量</div>
                 </div>
                 <div class="stat-card">
-                    <h3>👍 点赞总数</h3>
-                    <div class="number" id="totalLikes">-</div>
-                    <div class="label">工具点赞</div>
+                    <h3>📊 最近7天</h3>
+                    <div class="number" id="weekVisits">-</div>
+                    <div class="label">7天访问量</div>
                 </div>
             </div>
 
             <!-- 标签页 -->
             <div class="tabs">
-                <div class="tab active" onclick="switchTab('visits')">访问记录</div>
-                <div class="tab" onclick="switchTab('messages')">留言管理</div>
-                <div class="tab" onclick="switchTab('likes')">点赞管理</div>
-                <div class="tab" onclick="switchTab('pages')">页面统计</div>
+                <div class="tab active" onclick="switchTab('visits', event)">访问记录</div>
+                <div class="tab" onclick="switchTab('pages', event)">页面统计</div>
             </div>
 
             <!-- 标签页内容 -->
@@ -378,45 +376,6 @@
                         <tbody id="visitsBody"></tbody>
                     </table>
                     <div class="pagination" id="visitsPagination" style="display: none;"></div>
-                </div>
-
-                <!-- 留言管理 -->
-                <div class="tab-panel" id="messagesPanel">
-                    <h3>💬 留言管理</h3>
-                    <div id="messagesLoading" class="loading">加载中...</div>
-                    <div id="messagesError" class="error" style="display: none;"></div>
-                    <table class="data-table" id="messagesTable" style="display: none;">
-                        <thead>
-                            <tr>
-                                <th>时间</th>
-                                <th>姓名</th>
-                                <th>邮箱</th>
-                                <th>留言内容</th>
-                                <th>IP地址</th>
-                            </tr>
-                        </thead>
-                        <tbody id="messagesBody"></tbody>
-                    </table>
-                    <div class="pagination" id="messagesPagination" style="display: none;"></div>
-                </div>
-
-                <!-- 点赞管理 -->
-                <div class="tab-panel" id="likesPanel">
-                    <h3>👍 点赞管理</h3>
-                    <div id="likesLoading" class="loading">加载中...</div>
-                    <div id="likesError" class="error" style="display: none;"></div>
-                    <table class="data-table" id="likesTable" style="display: none;">
-                        <thead>
-                            <tr>
-                                <th>时间</th>
-                                <th>工具ID</th>
-                                <th>IP地址</th>
-                                <th>浏览器</th>
-                            </tr>
-                        </thead>
-                        <tbody id="likesBody"></tbody>
-                    </table>
-                    <div class="pagination" id="likesPagination" style="display: none;"></div>
                 </div>
 
                 <!-- 页面统计 -->
@@ -444,8 +403,6 @@
         let authToken = '';
         let currentTab = 'visits';
         let visitsPage = 1;
-        let messagesPage = 1;
-        let likesPage = 1;
 
         // 登录功能
         async function login() {
@@ -458,25 +415,8 @@
             try {
                 console.log('🔐 尝试登录，令牌:', token);
                 
-                // 首先测试认证接口
-                const authTestResponse = await fetch('/api/debug/auth-test', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-                
-                if (authTestResponse.ok) {
-                    const authTestData = await authTestResponse.json();
-                    console.log('认证测试结果:', authTestData);
-                    
-                    if (!authTestData.isMatch) {
-                        showError('authError', `认证失败: 令牌不匹配。期望: ${authTestData.expectedToken}`);
-                        return;
-                    }
-                }
-                
-                // 测试令牌是否有效
-                const response = await fetch('/api/messages/stats', {
+                // 使用访问记录API来验证令牌
+                const response = await fetch('/api/admin/visits?page=1&limit=1', {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
@@ -491,9 +431,9 @@
                     document.getElementById('dashboard').classList.add('active');
                     loadDashboard();
                 } else {
-                    const errorData = await response.json();
+                    const errorData = await response.json().catch(() => ({ chinese: '令牌无效' }));
                     console.error('登录失败:', errorData);
-                    showError('authError', errorData.chinese || '令牌无效，请检查后重试');
+                    showError('authError', errorData.chinese || errorData.message || '令牌无效，请检查后重试');
                 }
             } catch (error) {
                 console.error('登录异常:', error);
@@ -516,8 +456,6 @@
             await Promise.all([
                 loadOverallStats(),
                 loadVisitsData(),
-                loadMessagesData(),
-                loadLikesData(),
                 loadPagesData()
             ]);
         }
@@ -525,30 +463,17 @@
         // 加载总体统计
         async function loadOverallStats() {
             try {
-                const [visitsResponse, messagesResponse, likesResponse] = await Promise.all([
-                    fetch('/api/stats/overall'),
-                    fetch('/api/messages/stats', {
-                        headers: { 'Authorization': `Bearer ${authToken}` }
-                    }),
-                    fetch('/api/tools/likes/stats')
-                ]);
-
-                if (visitsResponse.ok) {
-                    const visitsData = await visitsResponse.json();
-                    document.getElementById('totalVisits').textContent = visitsData.data.totalVisits;
-                    document.getElementById('uniqueVisitors').textContent = visitsData.data.totalUniqueVisitors;
-                    document.getElementById('totalPages').textContent = visitsData.data.totalPages;
-                }
-
-                if (messagesResponse.ok) {
-                    const messagesData = await messagesResponse.json();
-                    document.getElementById('totalMessages').textContent = messagesData.total;
-                }
-
-                if (likesResponse.ok) {
-                    const likesData = await likesResponse.json();
-                    const totalLikes = Object.values(likesData.stats).reduce((sum, count) => sum + count, 0);
-                    document.getElementById('totalLikes').textContent = totalLikes;
+                const response = await fetch('/api/stats/overall');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('totalVisits').textContent = data.data.totalVisits || 0;
+                    document.getElementById('uniqueVisitors').textContent = data.data.totalUniqueVisitors || 0;
+                    document.getElementById('totalPages').textContent = data.data.totalPages || 0;
+                    document.getElementById('todayVisits').textContent = data.data.todayVisits || 0;
+                    document.getElementById('weekVisits').textContent = data.data.weekVisits || 0;
+                } else {
+                    console.error('加载统计失败:', response.status);
                 }
             } catch (error) {
                 console.error('加载统计失败:', error);
@@ -556,12 +481,24 @@
         }
 
         // 切换标签页
-        function switchTab(tabName) {
+        function switchTab(tabName, event) {
             // 更新标签样式
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
             
-            event.target.classList.add('active');
+            // 激活点击的标签
+            if (event && event.target) {
+                event.target.classList.add('active');
+            } else {
+                // 如果没有事件对象，找到对应的标签
+                const tabs = document.querySelectorAll('.tab');
+                tabs.forEach(tab => {
+                    if (tab.textContent.includes(tabName === 'visits' ? '访问记录' : '页面统计')) {
+                        tab.classList.add('active');
+                    }
+                });
+            }
+            
             document.getElementById(tabName + 'Panel').classList.add('active');
             
             currentTab = tabName;
@@ -627,64 +564,6 @@
             document.getElementById('visitsTable').style.display = 'table';
         }
 
-        // 加载留言数据
-        async function loadMessagesData() {
-            const loading = document.getElementById('messagesLoading');
-            const error = document.getElementById('messagesError');
-            const table = document.getElementById('messagesTable');
-            const pagination = document.getElementById('messagesPagination');
-
-            try {
-                loading.style.display = 'block';
-                error.style.display = 'none';
-                table.style.display = 'none';
-
-                console.log('🔍 加载留言数据...');
-
-                const response = await fetch(`/api/messages?page=${messagesPage}&limit=20`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                console.log('留言API响应状态:', response.status);
-
-                if (response.ok) {
-                    const data = await response.json();
-                    console.log('留言数据:', data);
-                    displayMessagesData(data.data);
-                    setupPagination('messages', data.data.pagination, pagination);
-                } else {
-                    const errorData = await response.json();
-                    console.error('留言API错误:', errorData);
-                    throw new Error(errorData.chinese || errorData.message || '获取留言失败');
-                }
-            } catch (err) {
-                console.error('加载留言失败:', err);
-                error.textContent = err.message;
-                error.style.display = 'block';
-            } finally {
-                loading.style.display = 'none';
-            }
-        }
-
-        // 显示留言数据
-        function displayMessagesData(data) {
-            const tbody = document.getElementById('messagesBody');
-            tbody.innerHTML = '';
-
-            data.messages.forEach(message => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${new Date(message.created_at).toLocaleString('zh-CN')}</td>
-                    <td>${message.name}</td>
-                    <td>${message.email}</td>
-                    <td class="message-content">${message.message}</td>
-                    <td class="ip-address">${message.ip_address}</td>
-                `;
-                tbody.appendChild(row);
-            });
-
-            document.getElementById('messagesTable').style.display = 'table';
-        }
 
         // 加载页面统计
         async function loadPagesData() {
@@ -721,63 +600,6 @@
             }
         }
 
-        // 加载点赞数据
-        async function loadLikesData() {
-            const loading = document.getElementById('likesLoading');
-            const error = document.getElementById('likesError');
-            const table = document.getElementById('likesTable');
-            const pagination = document.getElementById('likesPagination');
-
-            try {
-                loading.style.display = 'block';
-                error.style.display = 'none';
-                table.style.display = 'none';
-
-                console.log('🔍 加载点赞数据...');
-
-                const response = await fetch(`/api/admin/tool-likes?page=${likesPage}&limit=20`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                console.log('点赞API响应状态:', response.status);
-
-                if (response.ok) {
-                    const data = await response.json();
-                    console.log('点赞数据:', data);
-                    displayLikesData(data.data);
-                    setupPagination('likes', data.data.pagination, pagination);
-                } else {
-                    const errorData = await response.json();
-                    console.error('点赞API错误:', errorData);
-                    throw new Error(errorData.chinese || errorData.message || '获取点赞记录失败');
-                }
-            } catch (err) {
-                console.error('加载点赞失败:', err);
-                error.textContent = err.message;
-                error.style.display = 'block';
-            } finally {
-                loading.style.display = 'none';
-            }
-        }
-
-        // 显示点赞数据
-        function displayLikesData(data) {
-            const tbody = document.getElementById('likesBody');
-            tbody.innerHTML = '';
-
-            data.likes.forEach(like => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${new Date(like.created_at).toLocaleString('zh-CN')}</td>
-                    <td>${like.tool_id}</td>
-                    <td class="ip-address">${like.ip_address}</td>
-                    <td class="user-agent">${like.user_agent || '-'}</td>
-                `;
-                tbody.appendChild(row);
-            });
-
-            document.getElementById('likesTable').style.display = 'table';
-        }
 
         // 显示页面统计
         function displayPagesData(pages) {
@@ -812,12 +634,6 @@
                 if (type === 'visits') {
                     visitsPage = page - 1;
                     loadVisitsData();
-                } else if (type === 'messages') {
-                    messagesPage = page - 1;
-                    loadMessagesData();
-                } else if (type === 'likes') {
-                    likesPage = page - 1;
-                    loadLikesData();
                 }
             };
             container.appendChild(prevBtn);
@@ -836,12 +652,6 @@
                 if (type === 'visits') {
                     visitsPage = page + 1;
                     loadVisitsData();
-                } else if (type === 'messages') {
-                    messagesPage = page + 1;
-                    loadMessagesData();
-                } else if (type === 'likes') {
-                    likesPage = page + 1;
-                    loadLikesData();
                 }
             };
             container.appendChild(nextBtn);

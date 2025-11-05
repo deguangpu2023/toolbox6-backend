@@ -11,33 +11,6 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// MySQL数据库连接配置（留言板）
-const dbConfig = {
-  //host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
-  //user: process.env.MYSQL_USER || process.env.DB_USER || 'root',
-  //password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || '',
-  //database: process.env.MYSQL_DATABASE || process.env.DB_NAME || 'toolbox6',
-  //port: process.env.MYSQL_PORT || process.env.DB_PORT || 3306,
-  //charset: 'utf8mb4',
-  //timezone: '+00:00',
-  host: process.env.DB_HOST || 'maglev.proxy.rlwy.net',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'EpZRllhApFMUenjfLOyXSilDPHFyGbPg',
-  database: process.env.DB_NAME || 'railway',
-  port: process.env.DB_PORT || 48332,
-  adminToken: process.env.ADMIN_TOKEN || 'admin123',
-  environment:process.env.NODE_ENV || 'production',
-  charset: 'utf8mb4',
-  timezone: '+08:00',
-  connectionLimit: 10,
-  //acquireTimeout: 60000,
-  //timeout: 60000,
-  //reconnect: true
-};
-
-// 创建数据库连接池（留言板）
-let messagePool;
-
 // 安全中间件
 app.use(helmet({
   contentSecurityPolicy: false, // 允许内联脚本
@@ -92,75 +65,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// 初始化工具点赞数据库
-async function initToolLikesDatabase() {
-  try {
-    console.log('🔧 初始化工具点赞数据库...');
-    console.log('数据库配置:', {
-      host: dbConfig.host,
-      user: dbConfig.user,
-      database: dbConfig.database,
-      port: dbConfig.port
-    });
-
-    messagePool = mysql.createPool({
-      ...dbConfig,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0
-    });
-
-    // 测试连接
-    const connection = await messagePool.getConnection();
-    console.log('✅ 工具点赞数据库连接成功');
-    
-    // 创建工具点赞表（如果不存在）
-    console.log('👍 创建工具点赞表...');
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS tool_likes (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        tool_id VARCHAR(100) NOT NULL,
-        ip_address VARCHAR(45) NOT NULL,
-        user_agent TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        UNIQUE KEY unique_tool_ip (tool_id, ip_address),
-        INDEX idx_tool_id (tool_id),
-        INDEX idx_created_at (created_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    console.log('✅ 工具点赞表创建/检查完成');
-    
-    // 验证表是否创建成功
-    const [tables] = await connection.execute(`
-      SELECT TABLE_NAME 
-      FROM information_schema.TABLES 
-      WHERE TABLE_SCHEMA = ? 
-      AND TABLE_NAME IN ('tool_likes')
-    `, [dbConfig.database]);
-    
-    console.log('📊 已创建的表:', tables.map(t => t.TABLE_NAME));
-    
-    connection.release();
-    console.log('✅ 工具点赞数据库初始化完成');
-  } catch (error) {
-    console.error('❌ 工具点赞数据库连接失败:', error);
-    console.error('错误详情:', {
-      message: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState
-    });
-    
-    // 在生产环境中，如果数据库连接失败，应该退出进程
-    if (process.env.NODE_ENV === 'production') {
-      console.error('🚨 生产环境数据库连接失败，退出进程');
-      process.exit(1);
-    } else {
-      console.warn('⚠️ 开发环境数据库连接失败，继续运行');
-    }
-  }
-}
 
 // 根路径处理
 app.get('/', (req, res) => {
@@ -178,12 +82,6 @@ app.get('/', (req, res) => {
       'GET /api/stats/trend - 获取访问趋势',
       'POST /api/admin/cleanup - 清理旧数据（需要API密钥）',
       'GET /api/admin/visits - 获取访问记录（需要认证）',
-      'GET /api/tools/:toolId/likes - 获取工具点赞数',
-      'POST /api/tools/:toolId/likes - 点赞工具',
-      'DELETE /api/tools/:toolId/likes - 取消点赞工具',
-      'GET /api/tools/likes/stats - 获取所有工具点赞统计',
-      'POST /api/tools/batch-likes - 批量获取工具点赞数',
-      'GET /api/admin/tool-likes - 获取工具点赞记录（需要认证）',
       'GET /api/debug/database-status - 数据库状态检查',
       'GET /api/debug/auth-test - 认证测试',
       'GET /api/debug/timezone - 时区调试信息',
@@ -217,19 +115,6 @@ app.get('/health', async (req, res) => {
       health.services.visitorDatabase = 'ERROR';
     }
 
-    // 检查工具点赞数据库
-    try {
-      if (messagePool) {
-        const connection = await messagePool.getConnection();
-        await connection.execute('SELECT 1');
-        connection.release();
-        health.services.toolLikesDatabase = 'OK';
-      } else {
-        health.services.toolLikesDatabase = 'NOT_INITIALIZED';
-      }
-    } catch (error) {
-      health.services.toolLikesDatabase = 'ERROR';
-    }
 
     // 如果任何服务有问题，返回503状态
     const hasErrors = Object.values(health.services).some(status => status === 'ERROR');
@@ -458,338 +343,13 @@ app.post('/api/admin/cleanup', async (req, res) => {
 });
 
 
-// 工具点赞API路由
-
-// 获取工具点赞数
-app.get('/api/tools/:toolId/likes', async (req, res) => {
-  try {
-    const { toolId } = req.params;
-    
-    console.log(`🔍 获取工具点赞数请求: toolId=${toolId}`);
-    
-    if (!toolId) {
-      console.log('❌ 工具ID为空');
-      return res.status(400).json({
-        error: 'Tool ID is required',
-        chinese: '工具ID是必需的'
-      });
-    }
-
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    // 查询点赞数
-    const [rows] = await messagePool.execute(
-      'SELECT COUNT(*) as count FROM tool_likes WHERE tool_id = ?',
-      [toolId]
-    );
-
-    const count = rows[0] ? rows[0].count : 0;
-    console.log(`✅ 工具 ${toolId} 点赞数: ${count}`);
-
-    res.json({
-      toolId,
-      count: count
-    });
-
-  } catch (error) {
-    console.error('❌ 获取点赞数失败:', error);
-    console.error('错误详情:', {
-      message: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState
-    });
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// 点赞工具
-app.post('/api/tools/:toolId/likes', async (req, res) => {
-  try {
-    const { toolId } = req.params;
-    const clientIP = req.realIP;
-    const userAgent = req.get('User-Agent');
-    
-    if (!toolId) {
-      return res.status(400).json({
-        error: 'Tool ID is required',
-        chinese: '工具ID是必需的'
-      });
-    }
-
-    // 检查是否已经点赞
-    const [existing] = await messagePool.execute(
-      'SELECT id FROM tool_likes WHERE tool_id = ? AND ip_address = ?',
-      [toolId, clientIP]
-    );
-
-    if (existing.length > 0) {
-      return res.status(409).json({
-        error: 'Already liked',
-        chinese: '已经点赞过了'
-      });
-    }
-
-    // 插入点赞记录
-    const [result] = await messagePool.execute(
-      'INSERT INTO tool_likes (tool_id, ip_address, user_agent) VALUES (?, ?, ?)',
-      [toolId, clientIP, userAgent]
-    );
-
-    // 获取新的点赞数
-    const [countRows] = await messagePool.execute(
-      'SELECT COUNT(*) as count FROM tool_likes WHERE tool_id = ?',
-      [toolId]
-    );
-
-    console.log(`✅ 工具 ${toolId} 获得新点赞: IP=${clientIP}`);
-
-    res.status(201).json({
-      success: true,
-      toolId,
-      count: countRows[0].count,
-      message: 'Like added successfully',
-      chinese: '点赞成功'
-    });
-
-  } catch (error) {
-    console.error('❌ 点赞失败:', error);
-    
-    // 如果是重复键错误，返回已点赞状态
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({
-        error: 'Already liked',
-        chinese: '已经点赞过了'
-      });
-    }
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误'
-    });
-  }
-});
-
-// 取消点赞工具
-app.delete('/api/tools/:toolId/likes', async (req, res) => {
-  try {
-    const { toolId } = req.params;
-    const clientIP = req.realIP;
-    
-    if (!toolId) {
-      return res.status(400).json({
-        error: 'Tool ID is required',
-        chinese: '工具ID是必需的'
-      });
-    }
-
-    // 删除点赞记录
-    const [result] = await messagePool.execute(
-      'DELETE FROM tool_likes WHERE tool_id = ? AND ip_address = ?',
-      [toolId, clientIP]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        error: 'Like not found',
-        chinese: '未找到点赞记录'
-      });
-    }
-
-    // 获取新的点赞数
-    const [countRows] = await messagePool.execute(
-      'SELECT COUNT(*) as count FROM tool_likes WHERE tool_id = ?',
-      [toolId]
-    );
-
-    console.log(`✅ 工具 ${toolId} 取消点赞: IP=${clientIP}`);
-
-    res.json({
-      success: true,
-      toolId,
-      count: countRows[0].count,
-      message: 'Like removed successfully',
-      chinese: '取消点赞成功'
-    });
-
-  } catch (error) {
-    console.error('❌ 取消点赞失败:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误'
-    });
-  }
-});
-
-// 获取所有工具点赞统计
-app.get('/api/tools/likes/stats', async (req, res) => {
-  try {
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    const [rows] = await messagePool.execute(`
-      SELECT 
-        tool_id,
-        COUNT(*) as count
-      FROM tool_likes 
-      GROUP BY tool_id 
-      ORDER BY count DESC
-    `);
-
-    const stats = {};
-    rows.forEach(row => {
-      stats[row.tool_id] = row.count;
-    });
-
-    res.json({
-      success: true,
-      stats,
-      total: rows.length
-    });
-
-  } catch (error) {
-    console.error('❌ 获取统计信息失败:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误'
-    });
-  }
-});
-
-// 批量获取工具点赞数接口
-app.post('/api/tools/batch-likes', async (req, res) => {
-  try {
-    const { toolIds } = req.body;
-    
-    // 验证请求参数
-    if (!Array.isArray(toolIds) || toolIds.length === 0) {
-      return res.status(400).json({
-        error: 'toolIds must be a non-empty array',
-        chinese: 'toolIds 必须是非空数组'
-      });
-    }
-    
-    // 限制批量请求的数量，避免过大的请求
-    if (toolIds.length > 100) {
-      return res.status(400).json({
-        error: 'Too many toolIds requested. Maximum 100 allowed.',
-        chinese: '请求的工具ID过多，最多允许100个'
-      });
-    }
-    
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    console.log(`🔍 批量获取工具点赞数: ${toolIds.length} 个工具`);
-    
-    const result = {};
-    
-    // 批量获取点赞数
-    for (const toolId of toolIds) {
-      try {
-        const [rows] = await messagePool.execute(
-          'SELECT COUNT(*) as count FROM tool_likes WHERE tool_id = ?',
-          [toolId]
-        );
-        
-        const count = rows[0] ? rows[0].count : 0;
-        result[toolId] = count;
-        
-        console.log(`✅ 工具 ${toolId} 点赞数: ${count}`);
-      } catch (error) {
-        console.error(`❌ 获取工具 ${toolId} 点赞数失败:`, error);
-        result[toolId] = 0; // 出错时返回0
-      }
-    }
-    
-    console.log(`✅ 批量获取完成，处理了 ${Object.keys(result).length} 个工具`);
-    
-    res.json({
-      success: true,
-      likes: result,
-      count: Object.keys(result).length,
-      requestedCount: toolIds.length,
-      timestamp: new Date().toISOString(),
-      message: 'Batch likes retrieved successfully',
-      chinese: '批量获取点赞数成功'
-    });
-
-  } catch (error) {
-    console.error('❌ 批量获取工具点赞数失败:', error);
-    console.error('错误详情:', {
-      message: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState
-    });
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
 
 // 数据库状态检查接口
 app.get('/api/debug/database-status', async (req, res) => {
   try {
     const status = {
-      messagePool: !!messagePool,
-      dbConfig: {
-        host: dbConfig.host,
-        user: dbConfig.user,
-        database: dbConfig.database,
-        port: dbConfig.port
-      },
       environment: process.env.NODE_ENV || 'development'
     };
-
-    if (messagePool) {
-      try {
-        const connection = await messagePool.getConnection();
-        
-        // 检查表是否存在
-        const [tables] = await connection.execute(`
-          SELECT TABLE_NAME 
-          FROM information_schema.TABLES 
-          WHERE TABLE_SCHEMA = ? 
-          AND TABLE_NAME IN ('tool_likes')
-        `, [dbConfig.database]);
-        
-        status.tables = tables.map(t => t.TABLE_NAME);
-        status.connection = 'OK';
-        
-        connection.release();
-      } catch (error) {
-        status.connection = 'ERROR';
-        status.error = error.message;
-      }
-    }
 
     res.json(status);
   } catch (error) {
@@ -905,28 +465,6 @@ app.get('/api/debug/timezone', async (req, res) => {
       timestamp: new Date().toISOString()
     };
 
-    // 获取数据库时区信息
-    if (messagePool) {
-      try {
-        const connection = await messagePool.getConnection();
-        
-        // 获取数据库时区
-        const [dbTimezone] = await connection.execute('SELECT @@time_zone as timezone, @@system_time_zone as system_timezone');
-        const [dbTime] = await connection.execute('SELECT NOW() as db_time, DATE(CONVERT_TZ(UTC_TIMESTAMP(), \'+00:00\', \'+08:00\')) as db_date, UTC_TIMESTAMP() as `utc_time`');
-        
-        timezoneInfo.database = {
-          timezone: dbTimezone[0].timezone,
-          systemTimezone: dbTimezone[0].system_timezone,
-          dbTime: dbTime[0].db_time,
-          dbDate: dbTime[0].db_date,
-          utcTime: dbTime[0]['utc_time']
-        };
-        
-        connection.release();
-      } catch (error) {
-        timezoneInfo.database = { error: error.message };
-      }
-    }
 
     // 获取访问统计数据库时区信息
     try {
@@ -1148,63 +686,13 @@ app.post('/api/debug/fix-database', async (req, res) => {
     console.log('🔧 开始检查和修复数据库表...');
     
     const results = {
-      messagePool: !!messagePool,
       tables: {},
       errors: [],
       timestamp: new Date().toISOString()
     };
-
-    if (!messagePool) {
-      results.errors.push('数据库连接池未初始化');
-      return res.status(500).json(results);
-    }
-
-    try {
-      const connection = await messagePool.getConnection();
-      
-      // 检查并创建 tool_likes 表
-      try {
-        await connection.execute(`
-          CREATE TABLE IF NOT EXISTS tool_likes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            tool_id VARCHAR(100) NOT NULL,
-            ip_address VARCHAR(45) NOT NULL,
-            user_agent TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_tool_ip (tool_id, ip_address),
-            INDEX idx_tool_id (tool_id),
-            INDEX idx_created_at (created_at)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
-        results.tables.tool_likes = 'OK';
-        console.log('✅ tool_likes 表检查/创建完成');
-      } catch (error) {
-        results.tables.tool_likes = 'ERROR';
-        results.errors.push(`tool_likes 表错误: ${error.message}`);
-        console.error('❌ tool_likes 表错误:', error);
-      }
-
-      // 检查表是否存在
-      const [tables] = await connection.execute(`
-        SELECT TABLE_NAME 
-        FROM information_schema.TABLES 
-        WHERE TABLE_SCHEMA = ? 
-        AND TABLE_NAME IN ('tool_likes')
-      `, [dbConfig.database]);
-      
-      results.existingTables = tables.map(t => t.TABLE_NAME);
-      
-      connection.release();
-      
-      console.log('✅ 数据库表检查和修复完成');
-      res.json(results);
-      
-    } catch (error) {
-      results.errors.push(`数据库连接错误: ${error.message}`);
-      console.error('❌ 数据库连接错误:', error);
-      res.status(500).json(results);
-    }
+    
+    console.log('✅ 数据库表检查和修复完成');
+    res.json(results);
     
   } catch (error) {
     console.error('❌ 数据库修复失败:', error);
@@ -1215,100 +703,6 @@ app.post('/api/debug/fix-database', async (req, res) => {
   }
 });
 
-// 获取工具点赞记录（仅用于管理）
-app.get('/api/admin/tool-likes', async (req, res) => {
-  try {
-    console.log('🔍 获取点赞记录请求');
-    console.log('请求头:', req.headers);
-    console.log('查询参数:', req.query);
-    
-    // 简单的认证检查
-    const authHeader = req.headers.authorization;
-    const expectedToken = `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`;
-    
-    console.log('认证头:', authHeader ? '已提供' : '未提供');
-    console.log('期望令牌:', expectedToken);
-    
-    if (!authHeader || authHeader !== expectedToken) {
-      console.log('❌ 认证失败');
-      return res.status(401).json({
-        error: 'Unauthorized',
-        chinese: '未授权访问'
-      });
-    }
-
-    // 检查数据库连接池是否存在
-    if (!messagePool) {
-      console.error('❌ 数据库连接池未初始化');
-      return res.status(500).json({
-        error: 'Database not initialized',
-        chinese: '数据库未初始化'
-      });
-    }
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
-
-    console.log(`📊 获取点赞记录: page=${page}, limit=${limit}, offset=${offset}`);
-
-    // 直接使用连接池执行查询（与其他API保持一致）
-    try {
-      // 获取点赞记录
-      console.log('🔍 执行点赞查询...');
-      const [likes] = await messagePool.execute(
-        'SELECT id, tool_id, ip_address, user_agent, created_at FROM tool_likes ORDER BY created_at DESC LIMIT ? OFFSET ?',
-        [limit, offset]
-      );
-      console.log(`📊 查询到 ${likes.length} 条点赞记录`);
-
-      // 获取总数
-      console.log('🔍 执行计数查询...');
-      const [countResult] = await messagePool.execute('SELECT COUNT(*) as total FROM tool_likes');
-      const total = countResult[0] ? countResult[0].total : 0;
-      console.log(`📈 总点赞数: ${total}`);
-
-      console.log(`✅ 获取到 ${likes.length} 条点赞记录，总计 ${total} 条`);
-
-      res.json({
-        success: true,
-        data: {
-          likes,
-          pagination: {
-            page,
-            limit,
-            total,
-            totalPages: Math.ceil(total / limit)
-          }
-        }
-      });
-
-    } catch (dbError) {
-      console.error('❌ 数据库查询失败:', dbError);
-      return res.status(500).json({
-        error: 'Database query failed',
-        chinese: '数据库查询失败',
-        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ 获取点赞记录失败:', error);
-    console.error('错误详情:', {
-      message: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      chinese: '服务器内部错误',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
 
 // 404处理
 app.use('*', (req, res) => {
@@ -1323,12 +717,6 @@ app.use('*', (req, res) => {
       'GET /api/stats/trend - 获取访问趋势',
       'POST /api/admin/cleanup - 清理旧数据（需要API密钥）',
       'GET /api/admin/visits - 获取访问记录（需要认证）',
-      'GET /api/tools/:toolId/likes - 获取工具点赞数',
-      'POST /api/tools/:toolId/likes - 点赞工具',
-      'DELETE /api/tools/:toolId/likes - 取消点赞工具',
-      'GET /api/tools/likes/stats - 获取所有工具点赞统计',
-      'POST /api/tools/batch-likes - 批量获取工具点赞数',
-      'GET /api/admin/tool-likes - 获取工具点赞记录（需要认证）',
       'GET /admin - 管理后台界面'
     ]
   });
@@ -1362,10 +750,6 @@ async function startServer() {
     await initDatabase();
     console.log('✅ 访问统计数据库初始化完成');
     
-    // 初始化工具点赞数据库
-    console.log('🔧 初始化工具点赞数据库...');
-    await initToolLikesDatabase();
-    console.log('✅ 工具点赞数据库初始化完成');
     
     // 启动HTTP服务器
     app.listen(PORT, () => {
@@ -1374,7 +758,6 @@ async function startServer() {
       console.log(`📊 健康检查: http://localhost:${PORT}/health`);
       console.log(`🌍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`⏰ 启动时间: ${new Date().toLocaleString('zh-CN')}`);
-      console.log(`👍 工具点赞功能已启用`);
     });
     
     // 设置定时任务 - 每天凌晨2点清理旧数据
@@ -1399,19 +782,11 @@ async function startServer() {
 // 优雅关闭
 process.on('SIGTERM', async () => {
   console.log('🛑 收到SIGTERM信号，正在关闭服务器...');
-  if (messagePool) {
-    await messagePool.end();
-    console.log('✅ 留言板数据库连接池已关闭');
-  }
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('🛑 收到SIGINT信号，正在关闭服务器...');
-  if (messagePool) {
-    await messagePool.end();
-    console.log('✅ 留言板数据库连接池已关闭');
-  }
   process.exit(0);
 });
 

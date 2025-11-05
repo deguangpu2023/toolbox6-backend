@@ -48,15 +48,14 @@ class VisitorService {
           last_updated = CURRENT_TIMESTAMP
       `, [pageUrl]);
       
-      // 3. 检查是否为唯一访问者（24小时内）
+      // 3. 计算该页面的历史唯一访客数（所有时间）
       const [uniqueVisitors] = await connection.execute(`
         SELECT COUNT(DISTINCT visitor_ip) as unique_count
         FROM visitor_stats 
-        WHERE page_url = ? 
-        AND visit_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        WHERE page_url = ?
       `, [pageUrl]);
       
-      // 4. 更新唯一访问者数量
+      // 4. 更新唯一访问者数量（历史累计）
       await connection.execute(`
         UPDATE page_summary 
         SET unique_visitors = ?
@@ -164,14 +163,16 @@ class VisitorService {
         FROM visitor_stats
       `);
       
-      // 获取今日访问量 - 使用UTC时间转换为北京时间
+      // 获取今日访问量和唯一访客数 - 使用北京时间（UTC+8）
       const [todayStats] = await pool.execute(`
-        SELECT COALESCE(SUM(visits), 0) as today_visits
+        SELECT 
+          COALESCE(SUM(visits), 0) as today_visits,
+          COALESCE(SUM(unique_visitors), 0) as today_unique_visitors
         FROM daily_stats 
         WHERE date = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00'))
       `);
       
-      // 获取最近7天访问量（含今天，共7天） - 东八区
+      // 获取最近7天访问量（含今天，共7天） - 使用北京时间（UTC+8）
       const [weekStats] = await pool.execute(`
         SELECT COALESCE(SUM(visits), 0) as week_visits
         FROM daily_stats 
@@ -184,6 +185,7 @@ class VisitorService {
         totalUniqueVisitors: parseInt(uniqueVisitorsStats[0].total_unique_visitors) || 0,
         totalPages: parseInt(rows[0].total_pages) || 0,
         todayVisits: parseInt(todayStats[0].today_visits) || 0,
+        todayUniqueVisitors: parseInt(todayStats[0].today_unique_visitors) || 0,
         weekVisits: parseInt(weekStats[0].week_visits) || 0
       };
     } catch (error) {
@@ -232,25 +234,69 @@ class VisitorService {
     }
   }
   
-  // 获取访问趋势（最近30天）
+  // 获取访问趋势（最近N天）
   async getVisitTrend(days = 30) {
     try {
+      // 先获取今天的日期（北京时间）
+      const [todayRow] = await pool.execute(`
+        SELECT DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')) as today_date
+      `);
+      const todayDate = todayRow[0].today_date;
+      
+      // 获取有数据的日期统计 - 使用北京时间（UTC+8）
       const [rows] = await pool.execute(`
         SELECT 
           date,
           SUM(visits) as daily_visits,
           SUM(unique_visitors) as daily_unique_visitors
         FROM daily_stats 
-        WHERE date >= DATE_SUB(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+08:00')), INTERVAL ? DAY)
+        WHERE date >= DATE_SUB(?, INTERVAL ? DAY)
+          AND date <= ?
         GROUP BY date 
         ORDER BY date ASC
-      `, [days]);
+      `, [todayDate, days - 1, todayDate]);
       
-      return rows.map(row => ({
-        date: row.date,
-        visits: parseInt(row.daily_visits) || 0,
-        uniqueVisitors: parseInt(row.daily_unique_visitors) || 0
-      }));
+      // 创建日期到数据的映射
+      const dataMap = new Map();
+      rows.forEach(row => {
+        // 确保日期格式为 YYYY-MM-DD
+        const dateStr = row.date instanceof Date 
+          ? row.date.toISOString().split('T')[0] 
+          : String(row.date).split('T')[0];
+        dataMap.set(dateStr, {
+          visits: parseInt(row.daily_visits) || 0,
+          uniqueVisitors: parseInt(row.daily_unique_visitors) || 0
+        });
+      });
+      
+      // 生成完整的日期序列（补全缺失的日期为0）
+      const result = [];
+      const today = new Date(todayDate);
+      
+      // 确保日期格式正确
+      const formatDate = (date) => {
+        const d = new Date(date);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+      
+      // 从 days-1 天前到今天，生成完整日期序列
+      for (let i = days - 1; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        const dateStr = formatDate(date);
+        
+        const data = dataMap.get(dateStr);
+        result.push({
+          date: dateStr,
+          visits: data ? data.visits : 0,
+          uniqueVisitors: data ? data.uniqueVisitors : 0
+        });
+      }
+      
+      return result;
     } catch (error) {
       console.error('获取访问趋势失败:', error);
       throw error;
@@ -406,12 +452,11 @@ class VisitorService {
 
       let uniqueVisitorFixes = 0;
       for (const page of allPages) {
-        // 计算24小时内的唯一访客数
+        // 计算该页面的历史唯一访客数（所有时间）
         const [uniqueCount] = await pool.execute(`
           SELECT COUNT(DISTINCT visitor_ip) as unique_count
           FROM visitor_stats 
-          WHERE page_url = ? 
-          AND visit_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+          WHERE page_url = ?
         `, [page.page_url]);
 
         await pool.execute(`
